@@ -1,0 +1,5 @@
+# Copy to hosts.ini (gitignored) and fill in the IP from terraform output
+# Run: terraform -chdir=../terraform output ansible_inventory_entry
+
+[vm]
+ubuntu-vm ansible_host=192.168.1.XXX ansible_user=ansible

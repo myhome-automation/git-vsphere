@@ -1,0 +1,15 @@
+# Copy to terraform.tfvars and fill in — terraform.tfvars is gitignored
+
+esxi_host     = "192.168.1.174"
+esxi_username = "root"
+esxi_password = "your-esxi-root-password"
+
+vm_name      = "ubuntu-vm"
+vm_cpus      = 2
+vm_memory_mb = 2048
+vm_disk_gb   = 20
+datastore    = "apps"
+vm_network   = "VM Network"
+
+# Your control-node public key — injected via cloud-init so Ansible can SSH in
+ssh_public_key = "ssh-rsa AAAA..."

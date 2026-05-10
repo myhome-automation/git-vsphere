@@ -1,0 +1,52 @@
+---
+- name: Base configuration for provisioned VM
+  hosts: vm
+  become: yes
+  gather_facts: yes
+
+  tasks:
+    - name: Wait for SSH to be ready
+      wait_for_connection:
+        delay: 5
+        timeout: 120
+
+    - name: Update apt cache and upgrade packages
+      apt:
+        update_cache: yes
+        upgrade: dist
+        cache_valid_time: 3600
+
+    - name: Install common packages
+      apt:
+        name:
+          - curl
+          - git
+          - htop
+          - unzip
+          - python3
+          - python3-pip
+        state: present
+
+    - name: Set hostname
+      hostname:
+        name: "{{ inventory_hostname }}"
+
+    - name: Set timezone to UTC
+      timezone:
+        name: UTC
+
+    - name: Ensure ansible user exists with sudo
+      user:
+        name: ansible
+        groups: sudo
+        shell: /bin/bash
+        create_home: yes
+
+    - name: Print VM info
+      debug:
+        msg:
+          - "Hostname : {{ ansible_hostname }}"
+          - "IP       : {{ ansible_default_ipv4.address }}"
+          - "OS       : {{ ansible_distribution }} {{ ansible_distribution_version }}"
+          - "CPU cores: {{ ansible_processor_vcpus }}"
+          - "RAM (MB) : {{ ansible_memtotal_mb }}"
