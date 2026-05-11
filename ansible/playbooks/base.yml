@@ -1,0 +1,107 @@
+---
+# Run on every VM immediately after Terraform provisions it.
+# Extends LVM to fill the full disk, sets hostname, hardens SSH,
+# and installs common packages.
+- name: base | bootstrap all nodes
+  hosts: all
+  become: true
+
+  tasks:
+    # ── Disk: extend LVM to fill provisioned disk ───────────────────────────
+    - name: install growpart
+      dnf:
+        name: cloud-utils-growpart
+        state: present
+
+    - name: extend LVM PV partition (sda3)
+      command: growpart /dev/sda 3
+      register: growpart_out
+      # growpart exits 1 when nothing to do — treat as ok
+      failed_when: growpart_out.rc not in [0, 1]
+      changed_when: "'CHANGED' in growpart_out.stdout"
+
+    - name: resize LVM physical volume
+      command: pvresize /dev/sda3
+      changed_when: true
+
+    - name: extend lv_var with all free space
+      community.general.lvol:
+        vg: vg_system
+        lv: lv_var
+        size: +100%FREE
+        resizefs: true
+
+    # ── Hostname ────────────────────────────────────────────────────────────
+    - name: set hostname to inventory name
+      hostname:
+        name: "{{ inventory_hostname }}"
+
+    - name: update /etc/hosts with own name
+      lineinfile:
+        path: /etc/hosts
+        regexp: "^127.0.1.1"
+        line: "127.0.1.1 {{ inventory_hostname }}"
+        insertafter: "^127.0.0.1"
+
+    # ── SSH: lock down root + enforce key-only auth ──────────────────────────
+    - name: disable root SSH login
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "^PermitRootLogin"
+        line: "PermitRootLogin no"
+      notify: restart sshd
+
+    - name: disable password authentication
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "^PasswordAuthentication"
+        line: "PasswordAuthentication no"
+      notify: restart sshd
+
+    # ── Common packages ─────────────────────────────────────────────────────
+    - name: install common packages
+      dnf:
+        name:
+          - vim
+          - tmux
+          - git
+          - curl
+          - wget
+          - lvm2
+          - bash-completion
+          - net-tools
+          - bind-utils
+          - tcpdump
+          - nfs-utils
+        state: present
+
+    - name: full system update
+      dnf:
+        name: "*"
+        state: latest
+      tags: update
+
+    # ── Firewall: ensure firewalld is running ────────────────────────────────
+    - name: enable and start firewalld
+      systemd:
+        name: firewalld
+        state: started
+        enabled: true
+
+    # ── Timezone ────────────────────────────────────────────────────────────
+    - name: set timezone to America/Chicago
+      timezone:
+        name: America/Chicago
+
+    # ── open-vm-tools: ensure running so ESXi can read IP ───────────────────
+    - name: ensure open-vm-tools is running
+      systemd:
+        name: vmtoolsd
+        state: started
+        enabled: true
+
+  handlers:
+    - name: restart sshd
+      systemd:
+        name: sshd
+        state: restarted

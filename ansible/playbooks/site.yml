@@ -1,0 +1,27 @@
+---
+# Full cluster provisioning — run after terraform apply.
+#
+# Usage:
+#   cd ansible/
+#   ansible-playbook playbooks/site.yml
+#
+# Run individual stages:
+#   ansible-playbook playbooks/site.yml --tags base
+#   ansible-playbook playbooks/site.yml --tags dns
+#   ansible-playbook playbooks/site.yml --tags lb
+#   ansible-playbook playbooks/site.yml --tags k8s
+
+- import_playbook: base.yml
+  tags: [base]
+
+- import_playbook: dns_dhcp.yml
+  tags: [dns]
+
+- import_playbook: loadbalancer.yml
+  tags: [lb]
+
+- import_playbook: k8s_master.yml
+  tags: [k8s, k8s_master]
+
+- import_playbook: k8s_worker.yml
+  tags: [k8s, k8s_worker]

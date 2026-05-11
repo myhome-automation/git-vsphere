@@ -9,6 +9,10 @@ terraform.tfvars
 # Ansible
 *.retry
 ansible/inventory/hosts.ini
+ansible/.vault_pass
+
+# Packer
+packer/*.pkrvars.hcl
 
 # Secrets / env
 .env

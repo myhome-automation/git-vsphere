@@ -1,0 +1,152 @@
+---
+# Load balancer nodes (lb1, lb2) — HAProxy fronting k8s API + ingress.
+# lb1 is active; lb2 is standby. Use keepalived for VIP failover.
+- name: loadbalancer | install HAProxy and keepalived
+  hosts: loadbalancers
+  become: true
+
+  # All vars come from group_vars/all/vars.yml + vault.yml
+
+  tasks:
+    - name: install haproxy and keepalived
+      dnf:
+        name:
+          - haproxy
+          - keepalived
+        state: present
+
+    # ── HAProxy ─────────────────────────────────────────────────────────────
+    - name: write haproxy config
+      copy:
+        dest: /etc/haproxy/haproxy.cfg
+        content: |
+          global
+            log /dev/log local0
+            maxconn 4096
+            daemon
+
+          defaults
+            log     global
+            mode    tcp
+            option  tcplog
+            option  dontlognull
+            timeout connect 5s
+            timeout client  50s
+            timeout server  50s
+
+          # ── k8s API server ──────────────────────────────────────────────
+          frontend k8s_api
+            bind *:{{ k8s_api_port }}
+            default_backend k8s_masters
+
+          backend k8s_masters
+            balance roundrobin
+            option tcp-check
+            # Replace IPs with actual kmaster IPs after terraform apply
+            server kmaster1 192.168.1.x:{{ k8s_api_port }} check
+            server kmaster2 192.168.1.x:{{ k8s_api_port }} check
+            server kmaster3 192.168.1.x:{{ k8s_api_port }} check
+
+          # ── HTTP ingress ────────────────────────────────────────────────
+          frontend http_in
+            bind *:{{ http_port }}
+            default_backend workers_http
+
+          backend workers_http
+            balance roundrobin
+            server kworker1 192.168.1.x:30080 check
+            server kworker2 192.168.1.x:30080 check
+            server kworker3 192.168.1.x:30080 check
+
+          # ── HTTPS ingress ───────────────────────────────────────────────
+          frontend https_in
+            bind *:{{ https_port }}
+            default_backend workers_https
+
+          backend workers_https
+            balance roundrobin
+            server kworker1 192.168.1.x:30443 check
+            server kworker2 192.168.1.x:30443 check
+            server kworker3 192.168.1.x:30443 check
+
+          # ── HAProxy stats ───────────────────────────────────────────────
+          frontend stats
+            bind *:8404
+            mode http
+            stats enable
+            stats uri /stats
+            stats refresh 10s
+        mode: "0644"
+      notify: restart haproxy
+
+    # ── keepalived (VIP failover) ────────────────────────────────────────────
+    - name: write keepalived config
+      copy:
+        dest: /etc/keepalived/keepalived.conf
+        content: |
+          vrrp_instance VI_1 {
+            state {{ 'MASTER' if inventory_hostname == 'lb1' else 'BACKUP' }}
+            interface eth0
+            virtual_router_id 51
+            priority {{ '101' if inventory_hostname == 'lb1' else '100' }}
+            advert_int 1
+            authentication {
+              auth_type PASS
+              auth_pass {{ keepalived_password }}
+            }
+            virtual_ipaddress {
+              {{ vip }}
+            }
+          }
+        mode: "0644"
+      notify: restart keepalived
+
+    # ── Firewall ─────────────────────────────────────────────────────────────
+    - name: open LB firewall ports
+      firewalld:
+        port: "{{ item }}"
+        permanent: true
+        state: enabled
+        immediate: true
+      loop:
+        - "{{ k8s_api_port }}/tcp"
+        - "{{ http_port }}/tcp"
+        - "{{ https_port }}/tcp"
+        - "8404/tcp"    # HAProxy stats
+
+    - name: allow VRRP for keepalived
+      firewalld:
+        protocol: vrrp
+        permanent: true
+        state: enabled
+        immediate: true
+
+    - name: enable IP forwarding for LB
+      sysctl:
+        name: net.ipv4.ip_forward
+        value: "1"
+        sysctl_file: /etc/sysctl.d/lb.conf
+        reload: true
+
+    - name: enable and start haproxy
+      systemd:
+        name: haproxy
+        state: started
+        enabled: true
+
+    - name: enable and start keepalived
+      systemd:
+        name: keepalived
+        state: started
+        enabled: true
+
+  handlers:
+    - name: restart haproxy
+      systemd:
+        name: haproxy
+        state: restarted
+
+    - name: restart keepalived
+      systemd:
+        name: keepalived
+        state: restarted

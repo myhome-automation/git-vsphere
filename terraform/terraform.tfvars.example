@@ -1,15 +1,11 @@
-# Copy to terraform.tfvars and fill in — terraform.tfvars is gitignored
-
 esxi_host     = "192.168.1.174"
-esxi_username = "root"
 esxi_password = "your-esxi-root-password"
+template_name = "rocky9-template"
 
-vm_name      = "ubuntu-vm"
-vm_cpus      = 2
-vm_memory_mb = 2048
-vm_disk_gb   = 20
-datastore    = "apps"
-vm_network   = "VM Network"
-
-# Your control-node public key — injected via cloud-init so Ansible can SSH in
-ssh_public_key = "ssh-rsa AAAA..."
+# Optional: override per-role sizing
+# role_config = {
+#   k8s_master   = { cpu = 2, memory_mb = 4096,  disk_gb = 50  }
+#   k8s_worker   = { cpu = 2, memory_mb = 8192,  disk_gb = 100 }
+#   dns_dhcp     = { cpu = 1, memory_mb = 1024,  disk_gb = 20  }
+#   loadbalancer = { cpu = 1, memory_mb = 2048,  disk_gb = 20  }
+# }

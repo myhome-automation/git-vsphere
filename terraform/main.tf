@@ -1,62 +1,46 @@
+locals {
+  # ── datastore1 (VMFS-6, 1.4 TB) — control plane + infrastructure ──────────
+  # Hosts the template, masters, load balancers, and DNS/DHCP.
+  # Kept separate so the cluster brain is on one storage unit.
+  #
+  # ── apps (VMFS-5, 931 GB) — data plane ────────────────────────────────────
+  # Workers only — the nodes that actually run workloads.
+  # Large capacity for container images and persistent volumes.
+
+  vms = {
+    # control plane — datastore1
+    kmaster1 = { role = "k8s_master",   datastore = "datastore1" }
+    kmaster2 = { role = "k8s_master",   datastore = "datastore1" }
+    kmaster3 = { role = "k8s_master",   datastore = "datastore1" }
+
+    # data plane — apps
+    kworker1 = { role = "k8s_worker",   datastore = "apps" }
+    kworker2 = { role = "k8s_worker",   datastore = "apps" }
+    kworker3 = { role = "k8s_worker",   datastore = "apps" }
+
+    # infrastructure services — datastore1 (manage the cluster, not workloads)
+    dns1     = { role = "dns_dhcp",     datastore = "datastore1" }
+    lb1      = { role = "loadbalancer", datastore = "datastore1" }
+    lb2      = { role = "loadbalancer", datastore = "datastore1" }
+  }
+}
+
 resource "esxi_guest" "vm" {
-  guest_name = var.vm_name
-  disk_store = var.datastore
-  ovf_source = var.ovf_source
+  for_each = local.vms
 
-  numvcpus = var.vm_cpus
-  memsize  = var.vm_memory_mb
-
-  power = "on"
+  guest_name     = each.key
+  disk_store     = each.value.datastore
+  clone_from_vm  = var.template_name
+  numvcpus       = var.role_config[each.value.role].cpu
+  memsize        = var.role_config[each.value.role].memory_mb
+  boot_disk_size = var.role_config[each.value.role].disk_gb
+  boot_disk_type = "thin"
+  power          = "on"
 
   network_interfaces {
-    virtual_network = var.vm_network
+    virtual_network = "VM Network"
     nic_type        = "vmxnet3"
   }
 
-  # Resize the root disk beyond the OVA default
-  virtual_disks {
-    virtual_disk_id = esxi_virtual_disk.root.id
-    slot            = "0:0"
-  }
-
-  # Inject SSH key via cloud-init guestinfo (Ubuntu cloud image reads these)
-  guestinfo = var.ssh_public_key != "" ? {
-    "metadata"          = base64encode(local.cloud_meta)
-    "metadata.encoding" = "base64"
-    "userdata"          = base64encode(local.cloud_user)
-    "userdata.encoding" = "base64"
-  } : {}
-
-  guest_startup_timeout  = 120
-  guest_shutdown_timeout = 30
-}
-
-resource "esxi_virtual_disk" "root" {
-  virtual_disk_disk_store = var.datastore
-  virtual_disk_dir        = var.vm_name
-  virtual_disk_name       = "${var.vm_name}-root.vmdk"
-  virtual_disk_size       = var.vm_disk_gb
-  virtual_disk_type       = "thin"
-}
-
-locals {
-  cloud_meta = <<-META
-    instance-id: ${var.vm_name}
-    local-hostname: ${var.vm_name}
-  META
-
-  cloud_user = <<-USERDATA
-    #cloud-config
-    users:
-      - name: ansible
-        groups: sudo
-        shell: /bin/bash
-        sudo: ALL=(ALL) NOPASSWD:ALL
-        ssh_authorized_keys:
-          - ${var.ssh_public_key}
-    package_update: true
-    packages:
-      - python3
-      - python3-pip
-  USERDATA
+  notes = "role=${each.value.role}"
 }

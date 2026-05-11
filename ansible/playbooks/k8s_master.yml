@@ -1,0 +1,163 @@
+---
+# Kubernetes control-plane nodes (kmaster1/2/3).
+# Run base.yml first, then this playbook.
+# kmaster1 initialises the cluster; kmaster2/3 join as additional control-plane nodes.
+- name: k8s_master | install container runtime and kubeadm
+  hosts: k8s_masters
+  become: true
+
+  # All vars come from group_vars/all/vars.yml
+
+  tasks:
+    # ── Kernel modules required by k8s ──────────────────────────────────────
+    - name: load kernel modules
+      modprobe:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - overlay
+        - br_netfilter
+
+    - name: persist kernel modules
+      copy:
+        dest: /etc/modules-load.d/k8s.conf
+        content: |
+          overlay
+          br_netfilter
+
+    - name: set sysctl params for k8s networking
+      sysctl:
+        name: "{{ item.key }}"
+        value: "{{ item.value }}"
+        sysctl_file: /etc/sysctl.d/k8s.conf
+        reload: true
+      loop:
+        - { key: net.bridge.bridge-nf-call-iptables,  value: "1" }
+        - { key: net.bridge.bridge-nf-call-ip6tables, value: "1" }
+        - { key: net.ipv4.ip_forward,                  value: "1" }
+
+    # ── Swap off (k8s requirement) ───────────────────────────────────────────
+    - name: disable swap
+      command: swapoff -a
+      changed_when: true
+
+    - name: remove swap from fstab
+      replace:
+        path: /etc/fstab
+        regexp: '^([^#].*\sswap\s.*)$'
+        replace: '# \1'
+
+    # ── containerd ──────────────────────────────────────────────────────────
+    - name: add docker-ce repo (containerd source)
+      get_url:
+        url: https://download.docker.com/linux/centos/docker-ce.repo
+        dest: /etc/yum.repos.d/docker-ce.repo
+
+    - name: install containerd
+      dnf:
+        name: containerd.io
+        state: present
+
+    - name: generate default containerd config
+      shell: containerd config default > /etc/containerd/config.toml
+      args:
+        creates: /etc/containerd/config.toml
+
+    - name: set SystemdCgroup = true in containerd config
+      replace:
+        path: /etc/containerd/config.toml
+        regexp: 'SystemdCgroup = false'
+        replace: 'SystemdCgroup = true'
+      notify: restart containerd
+
+    - name: enable and start containerd
+      systemd:
+        name: containerd
+        state: started
+        enabled: true
+
+    # ── kubeadm / kubelet / kubectl ──────────────────────────────────────────
+    - name: add kubernetes repo
+      copy:
+        dest: /etc/yum.repos.d/kubernetes.repo
+        content: |
+          [kubernetes]
+          name=Kubernetes
+          baseurl=https://pkgs.k8s.io/core:/stable:/v{{ k8s_version }}/rpm/
+          enabled=1
+          gpgcheck=1
+          gpgkey=https://pkgs.k8s.io/core:/stable:/v{{ k8s_version }}/rpm/repodata/repomd.xml.key
+
+    - name: install kubeadm kubelet kubectl
+      dnf:
+        name:
+          - kubeadm
+          - kubelet
+          - kubectl
+        state: present
+        disable_excludes: kubernetes
+
+    - name: enable kubelet
+      systemd:
+        name: kubelet
+        enabled: true
+
+    # ── Firewall rules (control-plane ports) ────────────────────────────────
+    - name: open control-plane firewall ports
+      firewalld:
+        port: "{{ item }}"
+        permanent: true
+        state: enabled
+        immediate: true
+      loop:
+        - 6443/tcp    # kube-apiserver
+        - 2379-2380/tcp  # etcd
+        - 10250/tcp   # kubelet API
+        - 10251/tcp   # kube-scheduler
+        - 10252/tcp   # kube-controller-manager
+
+  handlers:
+    - name: restart containerd
+      systemd:
+        name: containerd
+        state: restarted
+
+# ── Init first master ────────────────────────────────────────────────────────
+- name: k8s_master | init cluster on kmaster1
+  hosts: kmaster1
+  become: true
+
+  tasks:
+    - name: check if cluster already initialised
+      stat:
+        path: /etc/kubernetes/admin.conf
+      register: kubeadm_init_done
+
+    - name: kubeadm init
+      command: >
+        kubeadm init
+        --control-plane-endpoint="{{ ansible_host }}:6443"
+        --pod-network-cidr={{ pod_network_cidr }}
+        --upload-certs
+      register: kubeadm_init_out
+      when: not kubeadm_init_done.stat.exists
+
+    - name: save kubeadm init output
+      copy:
+        content: "{{ kubeadm_init_out.stdout }}"
+        dest: /root/kubeadm-init.log
+      when: kubeadm_init_out is changed
+
+    - name: set up kubeconfig for root
+      shell: |
+        mkdir -p /root/.kube
+        cp /etc/kubernetes/admin.conf /root/.kube/config
+        chown root:root /root/.kube/config
+      args:
+        creates: /root/.kube/config
+
+    - name: install flannel CNI
+      command: kubectl apply -f https://raw.githubusercontent.com/flannel-io/flannel/master/Documentation/kube-flannel.yml
+      environment:
+        KUBECONFIG: /root/.kube/config
+      when: kubeadm_init_out is changed

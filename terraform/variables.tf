@@ -1,65 +1,44 @@
 variable "esxi_host" {
-  description = "ESXi host IP or hostname"
-  type        = string
-  default     = "192.168.1.174"
-}
-
-variable "esxi_username" {
-  description = "ESXi username"
-  type        = string
-  default     = "root"
+  type    = string
+  default = "192.168.1.174"
 }
 
 variable "esxi_password" {
-  description = "ESXi root password"
-  type        = string
-  sensitive   = true
+  type      = string
+  sensitive = true
 }
 
-variable "vm_name" {
-  description = "Name of the VM to create"
-  type        = string
-  default     = "ubuntu-vm"
+variable "template_name" {
+  type    = string
+  default = "rocky9-template"
 }
 
-variable "vm_cpus" {
-  description = "Number of vCPUs"
-  type        = number
-  default     = 2
-}
-
-variable "vm_memory_mb" {
-  description = "RAM in MB"
-  type        = number
-  default     = 2048
-}
-
-variable "vm_disk_gb" {
-  description = "Disk size in GB (overrides OVA default)"
-  type        = number
-  default     = 20
-}
-
-variable "datastore" {
-  description = "Target datastore name"
-  type        = string
-  default     = "apps"
-}
-
-variable "vm_network" {
-  description = "Portgroup name for the VM NIC"
-  type        = string
-  default     = "VM Network"
-}
-
-variable "ovf_source" {
-  description = "URL or local path to the OVA/OVF image"
-  type        = string
-  default     = "https://cloud-images.ubuntu.com/releases/22.04/release/ubuntu-22.04-server-cloudimg-amd64.ova"
-}
-
-variable "ssh_public_key" {
-  description = "SSH public key to inject into the VM via guestinfo"
-  type        = string
-  default     = ""
+variable "role_config" {
+  type = map(object({
+    cpu       = number
+    memory_mb = number
+    disk_gb   = number
+  }))
+  default = {
+    k8s_master = {
+      cpu       = 2
+      memory_mb = 4096
+      disk_gb   = 50
+    }
+    k8s_worker = {
+      cpu       = 2
+      memory_mb = 8192
+      disk_gb   = 100
+    }
+    dns_dhcp = {
+      cpu       = 1
+      memory_mb = 1024
+      disk_gb   = 20
+    }
+    loadbalancer = {
+      cpu       = 1
+      memory_mb = 2048
+      disk_gb   = 20
+    }
+  }
 }
