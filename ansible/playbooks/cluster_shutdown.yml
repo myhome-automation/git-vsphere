@@ -1,21 +1,21 @@
 ---
 # cluster_shutdown.yml
 #
-# Gracefully shut down every host that's in our inventory's `everyone`
-# group — all 8 cluster clones AND vault-server.
+# Gracefully shut down the 8 CLUSTER VMs only. vault-server is left
+# alone (it's a separate workload).
 #
 # Order:
-#   1. workers (drain stops new pods being scheduled; not strictly needed
-#      since we're powering off everything)
+#   1. workers (drain not needed since we're powering off)
 #   2. dns + lb
 #   3. masters
-#   4. vault-server last
+#
+# To ALSO shut down vault-server, run `all_shutdown.yml` instead.
 #
 # Usage:
 #   ansible-playbook playbooks/cluster_shutdown.yml
 #
-# To power the cluster back on, use cluster_powerup.yml (runs locally
-# against ESXi vim-cmd).
+# To power the cluster back on:
+#   ansible-playbook playbooks/cluster_powerup.yml
 - name: shutdown | workers first
   hosts: k8s_workers
   become: true
@@ -46,22 +46,14 @@
       async: 1
       poll: 0
 
-- name: shutdown | vault-server last
-  hosts: vault
-  become: true
-  gather_facts: false
-  tasks:
-    - name: schedule shutdown
-      shell: nohup sh -c 'sleep 20 && /sbin/shutdown -h now' >/dev/null 2>&1 &
-      async: 1
-      poll: 0
-
 - name: shutdown | report
   hosts: localhost
   gather_facts: false
   tasks:
     - debug:
         msg: |
-          Shutdown commands dispatched. VMs will be off in ~30 seconds.
-          To verify: ssh root@192.168.1.174 'vim-cmd vmsvc/getallvms | xargs ...'
-          To bring them back: ansible-playbook playbooks/cluster_powerup.yml
+          Cluster VMs shutdown dispatched. Off in ~25 seconds.
+          vault-server LEFT RUNNING. To verify:
+            ssh root@192.168.1.174 'vim-cmd vmsvc/getallvms | while read v _; do
+              case $v in [0-9]*) printf "%s " $v; vim-cmd vmsvc/power.getstate $v | tail -1;; esac; done'
+          To bring cluster back: ansible-playbook playbooks/cluster_powerup.yml

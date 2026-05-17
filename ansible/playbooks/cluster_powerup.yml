@@ -1,26 +1,27 @@
 ---
 # cluster_powerup.yml
 #
-# Power on every cluster VM (and vault-server) via ESXi vim-cmd.
+# Power on the 8 CLUSTER VMs (skips vault-server — assumed already up).
 # Runs locally on the ansible controller (ssh to ESXi), since the
 # target VMs are off and unreachable from ansible directly.
 #
-# Order matches the inverse of cluster_shutdown.yml:
-#   1. vault-server first (DNS + Vault back online)
-#   2. dns + loadbalancer (DNS for cluster bootstrap)
-#   3. masters (control plane comes up)
-#   4. workers
+# Order:
+#   1. dns + lb (DNS for cluster bootstrap)
+#   2. masters (control plane comes up)
+#   3. workers
+#
+# To also power on vault-server, use all_powerup.yml instead.
 #
 # Usage:
 #   ansible-playbook playbooks/cluster_powerup.yml
-- name: powerup | start all VMs via ESXi vim-cmd
+- name: powerup | start cluster VMs via ESXi vim-cmd
   hosts: localhost
   gather_facts: false
   vars:
     esxi_host: 192.168.1.174
     # vmid resolution is name-based via vim-cmd; this list is the order.
+    # vault-server intentionally absent — see all_powerup.yml if needed.
     vm_order:
-      - vault-server
       - dns1
       - lb1
       - kmaster1
@@ -59,13 +60,12 @@
       poll: 0
       async: 0
 
-    - name: wait for SSH on all cluster VMs (max 5 min)
+    - name: wait for SSH on cluster VMs (max 5 min)
       wait_for:
         host: "{{ item }}"
         port: 22
         timeout: 300
       loop:
-        - 192.168.1.202   # vault-server
         - 192.168.1.185   # dns1
         - 192.168.1.188   # lb1
         - 192.168.1.186   # kmaster1

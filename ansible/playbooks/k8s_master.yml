@@ -119,6 +119,21 @@
         - 10250/tcp   # kubelet API
         - 10251/tcp   # kube-scheduler
         - 10252/tcp   # kube-controller-manager
+        - 179/tcp     # Calico BGP
+        - 5473/tcp    # Calico Typha
+        - 4789/udp    # Calico VXLAN
+
+    # Pod CIDR traffic must be allowed end-to-end. Without this, firewalld
+    # blocks pod-to-pod across nodes even though Calico installs routes —
+    # symptom is BIRD "BGP not established" and FailedDiscoveryCheck on the
+    # v3.projectcalico.org APIService after a fresh reboot. See docs/calico.md.
+    - name: trust pod CIDR ({{ pod_network_cidr }})
+      firewalld:
+        source: "{{ pod_network_cidr }}"
+        zone: trusted
+        state: enabled
+        permanent: true
+        immediate: true
 
   handlers:
     - name: restart containerd

@@ -1,0 +1,41 @@
+---
+# all_shutdown.yml
+#
+# Gracefully shut down ALL 9 VMs (cluster + vault-server). Use this
+# when you're powering off the ESXi host or doing maintenance.
+#
+# For cluster-only shutdown (leaves vault-server running), use
+# cluster_shutdown.yml instead.
+#
+# Order:
+#   1. workers
+#   2. dns + lb
+#   3. masters
+#   4. vault-server LAST
+#
+# Usage:
+#   ansible-playbook playbooks/all_shutdown.yml
+
+- import_playbook: cluster_shutdown.yml
+
+- name: shutdown | vault-server last
+  hosts: vault
+  become: true
+  gather_facts: false
+  tasks:
+    - name: schedule shutdown (vault-server)
+      shell: nohup sh -c 'sleep 20 && /sbin/shutdown -h now' >/dev/null 2>&1 &
+      async: 1
+      poll: 0
+
+- name: shutdown | report (full)
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - debug:
+        msg: |
+          ALL 9 VMs shutdown dispatched (including vault-server). Off in ~30 s.
+          ESXi host can be safely powered off after that.
+          To bring everything back:
+            ansible-playbook playbooks/cluster_powerup.yml   # cluster only
+            ansible-playbook playbooks/all_powerup.yml       # cluster + vault

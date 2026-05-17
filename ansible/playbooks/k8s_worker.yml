@@ -108,6 +108,19 @@
       loop:
         - 10250/tcp     # kubelet API
         - 30000-32767/tcp  # NodePort services
+        - 179/tcp       # Calico BGP
+        - 5473/tcp      # Calico Typha
+        - 4789/udp      # Calico VXLAN
+
+    # See k8s_master.yml + docs/calico.md — without this, pod-to-pod across
+    # nodes is blocked by firewalld and BIRD reports "BGP not established".
+    - name: trust pod CIDR ({{ pod_network_cidr }})
+      firewalld:
+        source: "{{ pod_network_cidr }}"
+        zone: trusted
+        state: enabled
+        permanent: true
+        immediate: true
 
   handlers:
     - name: restart containerd

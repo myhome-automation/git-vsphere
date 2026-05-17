@@ -1,0 +1,46 @@
+---
+# all_powerup.yml
+#
+# Power on EVERY VM (vault-server + 8 cluster). Use after a full host
+# reboot or after `all_shutdown.yml` was run.
+#
+# Order: vault-server first (so DNS via lb1 dependency chain works
+# even though DNS is actually on lb1, vault is brought up first for
+# consistency with the documented dependency order).
+#
+# For cluster-only powerup (assumes vault-server already running), use
+# cluster_powerup.yml instead.
+#
+# Usage:
+#   ansible-playbook playbooks/all_powerup.yml
+- name: powerup | start vault-server first via ESXi vim-cmd
+  hosts: localhost
+  gather_facts: false
+  vars:
+    esxi_host: 192.168.1.174
+  tasks:
+    - name: get vault-server vmid
+      shell: |
+        ssh -o StrictHostKeyChecking=no root@{{ esxi_host }} \
+          "vim-cmd vmsvc/getallvms | awk '\$2==\"vault-server\" {print \$1}'"
+      register: vault_vmid
+      changed_when: false
+
+    - name: power on vault-server (skip if on)
+      shell: |
+        ssh -o StrictHostKeyChecking=no root@{{ esxi_host }} \
+          "state=\$(vim-cmd vmsvc/power.getstate {{ vault_vmid.stdout }} | tail -1); \
+           if [ \"\$state\" != 'Powered on' ]; then \
+             vim-cmd vmsvc/power.on {{ vault_vmid.stdout }}; echo started; \
+           else echo already_on; fi"
+      register: vault_pon
+      changed_when: "'started' in vault_pon.stdout"
+
+    - name: wait for vault-server SSH
+      wait_for:
+        host: 192.168.1.202
+        port: 22
+        timeout: 300
+
+# Now bring up the cluster.
+- import_playbook: cluster_powerup.yml

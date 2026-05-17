@@ -5,19 +5,22 @@ All playbooks are under `ansible/playbooks/`.
 
 ---
 
-## Shutdown the entire stack
+## Shutdown
 
+**Cluster-only (vault-server LEFT RUNNING) — default:**
 ```bash
 cd ansible/
 ansible-playbook -i inventory/hosts.ini --vault-password-file=.vault_pass \
   playbooks/cluster_shutdown.yml
 ```
+Shuts down 8 VMs in order: workers → dns + lb → masters. vault-server untouched.
 
-Dispatches `shutdown -h now` to each host in dependency order:
-1. workers (k8s_workers)
-2. dns + lb (dns_dhcp + loadbalancers)
-3. masters (k8s_masters)
-4. vault-server last
+**Everything (cluster + vault-server) — explicit opt-in:**
+```bash
+ansible-playbook ... playbooks/all_shutdown.yml
+```
+Same order as above, then vault-server last. Use before powering off the
+ESXi host or doing physical maintenance.
 
 Uses `async: 1, poll: 0` so the ansible run doesn't hang waiting for the
 SSH session it just told to die. VMs are off ~30 s after dispatch.
@@ -30,22 +33,29 @@ ssh root@192.168.1.174 'vim-cmd vmsvc/getallvms | while read v _; do \
 
 ---
 
-## Power up the entire stack
+## Power up
 
+**Cluster-only (assumes vault-server already running) — default:**
 ```bash
 cd ansible/
 ansible-playbook -i inventory/hosts.ini --vault-password-file=.vault_pass \
   playbooks/cluster_powerup.yml
 ```
+Brings up dns + lb → masters → workers in dependency order.
 
-Runs locally on the ansible controller (since the cluster VMs are off
-and unreachable). For each VM in dependency order (vault → dns+lb →
-masters → workers):
+**Everything (vault-server first, then cluster):**
+```bash
+ansible-playbook ... playbooks/all_powerup.yml
+```
+Use after a full host reboot or `all_shutdown.yml`.
+
+Both playbooks run locally on the ansible controller (since target VMs are
+off and unreachable). For each VM:
 1. Look up vmid via `ssh root@192.168.1.174 vim-cmd vmsvc/getallvms`
 2. Skip if already powered on
 3. Otherwise `vim-cmd vmsvc/power.on <vmid>`
 
-Then waits up to 5 min for SSH to come up on every host (port 22 probe).
+Then waits up to 5 min for SSH on each host (port 22 probe).
 
 Cluster API typically reachable on `https://192.168.1.50:6443` within
 ~1 min of all VMs being SSHable (kubelet + control plane pods need to
@@ -135,3 +145,45 @@ dig @192.168.1.188 -x 192.168.1.186 +short          # reverse
 # k8s API via VIP
 curl -k https://192.168.1.50:6443/healthz           # should return ok
 ```
+
+---
+
+## Kubeconfig on the workstation (multi-cluster)
+
+The workstation runs a **local k3OS cluster** (used for building docker
+images) alongside the **homelab** vsphere cluster, so `~/.kube/config`
+holds both as named contexts. Switch with `kubectl config use-context`.
+
+**One-time fetch / refresh of the homelab kubeconfig:**
+```bash
+scripts/fetch-kubeconfig.sh homelab 192.168.1.186
+# - ssh's to kmaster1, sudo-reads /etc/kubernetes/admin.conf
+# - renames cluster/user/context to "homelab"
+# - merges into ~/.kube/config (atomically; preserves other contexts)
+# - verifies the connection
+```
+
+The script is generic — re-use it for any future cluster:
+```bash
+scripts/fetch-kubeconfig.sh <ctx-name> <master-host> [ssh-user] [ssh-key] [remote-path]
+
+# Examples:
+scripts/fetch-kubeconfig.sh homelab     192.168.1.186                      # this repo's defaults
+scripts/fetch-kubeconfig.sh staging     10.0.0.5 ubuntu ~/.ssh/staging.pem
+scripts/fetch-kubeconfig.sh k3s-edge    edge.lan root ~/.ssh/edge.key /etc/rancher/k3s/k3s.yaml
+```
+
+Daily use:
+```bash
+kubectl config get-contexts                     # see all clusters
+kubectl config use-context homelab              # vsphere cluster
+kubectl config use-context k3os-local           # local workstation cluster (docker builds)
+
+# Or per-command without flipping current-context:
+kubectl --context homelab get nodes
+kubectl --context k3os-local get nodes
+```
+
+The homelab kubeconfig's server URL is `https://192.168.1.50:6443` (the
+keepalived VIP), so any one master going down doesn't break kubectl as
+long as lb1 + at least one master are up.

@@ -72,6 +72,25 @@ MASTER/BACKUP keepalived config (look in git history).
 
 ---
 
+## I3a. firewalld blocks BGP / pod-to-pod after reboot
+
+After every host reboot (or fresh deploy), `calico-node` pods come up
+0/1 Ready and `calico-node -bird-ready` reports "BGP not established"
+because firewalld on each k8s node drops Calico traffic before Calico's
+iptables rules can apply.
+
+`k8s_master.yml` and `k8s_worker.yml` now open BGP/Typha/VXLAN and trust
+`pod_network_cidr` (10.0.0.0/16) in firewalld zone `trusted`. If a node
+ever shows 0/1 calico-node after a reboot, run **only the firewall play**:
+
+```bash
+ansible-playbook ... playbooks/site.yml --tags k8s --start-at-task='open control-plane firewall ports'
+```
+
+Full details and ad-hoc one-liner fix in [calico.md](calico.md) section C1.
+
+---
+
 ## I4. Flannel CNI
 
 Master init plays `kubectl apply -f` on

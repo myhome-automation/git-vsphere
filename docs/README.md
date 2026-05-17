@@ -6,7 +6,9 @@ you're debugging.
 
 | File | Covers |
 |------|--------|
+| **[architecture.md](architecture.md)** | **Full system architecture: hardware, network, k8s layer, CIDRs, build pipeline** |
 | [k8s-cluster.md](k8s-cluster.md) | kubeadm preflight, containerd CRI, flannel, k8s repo channel, single-LB API VIP |
+| [calico.md](calico.md) | Calico/Tigera operator, firewalld blocking BGP, ippools stale-status, CIDR coupling |
 | [vault-server.md](vault-server.md) | vault-server as clone source, vmkfstools clone pitfalls, NFC leases, ovftool task locks |
 | [haproxy.md](haproxy.md) | HAProxy on Rocky 9: SELinux bind, single-LB keepalived, interface auto-detect |
 | [dns.md](dns.md) | dnsmasq on lb1 for `myhomelab.com`, addn-hosts placement, NM resolver overrides |
