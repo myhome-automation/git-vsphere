@@ -148,6 +148,61 @@ curl -k https://192.168.1.50:6443/healthz           # should return ok
 
 ---
 
+## LB-pair operations
+
+### Check VIP holder
+```bash
+for h in lb1 lb2; do
+  echo "-- $h --"
+  ssh ansible@$h 'ip -4 addr show ens192 | grep 192.168.1.50 || echo "no VIP"'
+done
+```
+Exactly one of them should print the VIP line. If neither does, both
+keepalived units are down — start with `systemctl status keepalived`.
+
+### Verify both boxes are fully provisioned
+Per-host snapshot — `haproxy`, `keepalived`, `dnsmasq` must all be `active`:
+```bash
+for h in lb1 lb2; do
+  echo "-- $h --"
+  ssh ansible@$h 'for s in haproxy keepalived dnsmasq; do
+    printf "%-12s %s\n" "$s" "$(systemctl is-active $s)"
+  done'
+done
+```
+
+### Test failover (intentional, ~3 s disruption)
+```bash
+ssh ansible@lb1 'sudo systemctl stop keepalived'           # remove MASTER
+sleep 4
+ssh ansible@lb2 'ip -4 addr show ens192 | grep 192.168.1.50'   # VIP migrated
+dig @192.168.1.50 kmaster1.myhomelab.com +short                # DNS still works
+curl -sk https://192.168.1.50:6443/healthz                     # API still works
+ssh ansible@lb1 'sudo systemctl start keepalived'          # VIP returns (preempt)
+```
+
+### Force a planned switchover (without "killing" lb1)
+keepalived re-reads the config on `reload`; lowering lb1's priority
+below lb2's makes lb2 become MASTER cleanly.
+```bash
+ssh ansible@lb1 'sudo sed -i "s/priority 101/priority 99/" /etc/keepalived/keepalived.conf'
+ssh ansible@lb1 'sudo systemctl reload keepalived'
+# work happens on lb1 (e.g. dnf update, reboot) — lb2 holds VIP throughout
+ssh ansible@lb1 'sudo sed -i "s/priority 99/priority 101/" /etc/keepalived/keepalived.conf'
+ssh ansible@lb1 'sudo systemctl reload keepalived'         # lb1 reclaims VIP
+```
+
+### Recover one LB after an extended outage
+After lb2 was off for a while (e.g. rebuild):
+```bash
+# Re-fetch any DNS zone updates / firewall rules
+ansible-playbook ... playbooks/site.yml --limit lb2 --tags dns,lb
+# Confirm dnsmasq + keepalived + haproxy come up
+ssh ansible@lb2 'for s in haproxy keepalived dnsmasq; do systemctl is-active $s; done'
+```
+
+---
+
 ## Kubeconfig on the workstation (multi-cluster)
 
 The workstation runs a **local k3OS cluster** (used for building docker

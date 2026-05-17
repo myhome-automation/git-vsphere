@@ -6,8 +6,9 @@ you're debugging.
 
 | File | Covers |
 |------|--------|
-| **[architecture.md](architecture.md)** | **Full system architecture: hardware, network, k8s layer, CIDRs, build pipeline** |
-| [k8s-cluster.md](k8s-cluster.md) | kubeadm preflight, containerd CRI, flannel, k8s repo channel, single-LB API VIP |
+| **[architecture.md](architecture.md)** | **Full system architecture: hardware, network, k8s layer, CIDRs, port matrix, LB failover sequence, request/DNS flows** |
+| **[deployment.md](deployment.md)** | **End-to-end deployment runbook: clone-from-vault → site.yml → verification checklist** |
+| [k8s-cluster.md](k8s-cluster.md) | kubeadm preflight, containerd CRI, flannel, k8s repo channel, HA LB API VIP |
 | [calico.md](calico.md) | Calico/Tigera operator, firewalld blocking BGP, ippools stale-status, CIDR coupling |
 | [vault-server.md](vault-server.md) | vault-server as clone source, vmkfstools clone pitfalls, NFC leases, ovftool task locks |
 | [haproxy.md](haproxy.md) | HAProxy on Rocky 9: SELinux bind, single-LB keepalived, interface auto-detect |
@@ -21,8 +22,10 @@ you're debugging.
 
 - **vault-server** (192.168.1.202) — Rocky 9.7, manually built, used as the clone template
 - **8 cluster VMs** cloned from vault-server via `terraform/clone-from-vault.sh` (vmkfstools)
-- **k8s 1.36.1** via ansible playbooks under `ansible/playbooks/`
-- **Internal DNS** (myhomelab.com) served by dnsmasq on lb1
+- **k8s 1.36.1** (3 masters + 3 workers) via ansible playbooks under `ansible/playbooks/`
+- **HA LB pair** (lb1 + lb2) — HAProxy + keepalived + dnsmasq on both; VIP `192.168.1.50` fronts API/HTTP/HTTPS/DNS
+- **Calico** v3.30.4 CNI, **Istio** 1.27.2 service mesh
+- **Internal DNS** (`myhomelab.com`) served by dnsmasq HA on the LB pair (answered by VIP holder)
 
 See [project memory](../../../home/bstha/.claude/projects/-apps-git-code-git-vsphere/memory/project_vsphere_k8s.md)
 (local-only) for the current build state.

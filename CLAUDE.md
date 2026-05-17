@@ -73,7 +73,11 @@ ssh -i /apps/git-code/keys/ansible-key ansible@192.168.1.186 \
   'sudo KUBECONFIG=/root/.kube/config kubectl get nodes'
 ```
 
-`docs/operations.md` is the canonical day-to-day ops cheatsheet.
+For full reference docs: `docs/deployment.md` is the end-to-end "zero
+to running cluster" runbook (with verification checklist);
+`docs/operations.md` is the day-2 ops cheatsheet (shutdown/powerup, LB
+failover test, planned VIP switchover, kubeconfig refresh, single-host
+recovery, change pod CIDR).
 
 ## Inventory groups (used by `hosts:` in playbooks)
 

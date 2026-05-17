@@ -333,6 +333,70 @@ everything else upstream — typically also to lb1.
 
 ---
 
+## LB pair failover sequence
+
+Both lb1 and lb2 run **the same three services** at all times
+(`haproxy`, `keepalived`, `dnsmasq`). Failover is just VIP movement —
+no service-start delay.
+
+```
+                 ╔═══════════════════════╗      ╔═══════════════════════╗
+   STEADY STATE  ║   lb1 (192.168.1.188) ║      ║   lb2 (192.168.1.185) ║
+   (lb1 owns VIP)║   keepalived = MASTER ║◄═══►║   keepalived = BACKUP ║
+                 ║   priority = 101      ║ VRRP ║   priority = 100      ║
+                 ║   ───────────────────  ║  proto ║   ───────────────────  ║
+                 ║   haproxy   :active   ║ 112  ║   haproxy   :active   ║
+                 ║   dnsmasq   :active   ║      ║   dnsmasq   :active   ║
+                 ║   listens on:         ║      ║   listens on:         ║
+                 ║    127.0.0.1, .188,   ║      ║    127.0.0.1, .185    ║
+                 ║    192.168.1.50 (VIP) ║      ║    (no VIP yet)       ║
+                 ╚═══════════════════════╝      ╚═══════════════════════╝
+                                  ▲
+                                  │ clients hit VIP .50 → only lb1 answers
+                                  │
+                          ┌───────┴───────┐
+                          │  workloads,   │
+                          │  kubectl,     │
+                          │  dig @.50     │
+                          └───────────────┘
+
+                                    │
+                                    ▼  lb1 loses keepalived (crash, network drop, sysadmin stop)
+
+                 ╔═══════════════════════╗      ╔═══════════════════════╗
+   FAILOVER      ║   lb1 (192.168.1.188) ║      ║   lb2 (192.168.1.185) ║
+   (~3 sec)      ║   keepalived = DOWN   ║      ║   keepalived = MASTER ║
+                 ║   ───────────────────  ║      ║   priority = 100      ║
+                 ║   haproxy still up    ║      ║   ───────────────────  ║
+                 ║   dnsmasq still up    ║      ║   GARP for 192.168.1.50║
+                 ║   (no traffic — VIP   ║      ║   bind-dynamic picks   ║
+                 ║    gone, ARP flushed) ║      ║   up VIP on ens192     ║
+                 ║                       ║      ║   dnsmasq now also     ║
+                 ║                       ║      ║   listening on .50     ║
+                 ╚═══════════════════════╝      ╚═══════════════════════╝
+                                                          ▲
+                                                          │ traffic to .50
+                                                          │ resumes here
+                                                  ┌───────┴───────┐
+                                                  │  workloads    │
+                                                  │  kubectl      │
+                                                  │  dig @.50     │
+                                                  └───────────────┘
+```
+
+Failure modes the pair covers:
+- Power-off of lb1 VM → lb2 takes over.
+- `systemctl stop keepalived` on lb1 → lb2 takes over.
+- Kernel hang on lb1 → VRRP advert miss for 3 × `advert_int=1s` → lb2 takes over.
+
+What it does *not* cover (single ESXi host):
+- ESXi host crash → both LBs (and the rest of the cluster) gone together.
+- DNS data drift between lb1 and lb2: `dns.yml` writes the same
+  `myhomelab.hosts` to both, so they can't drift unless someone edits
+  one host by hand.
+
+---
+
 ## Firewall port matrix
 
 Every k8s node (master + worker) runs firewalld in zone `public`. Calico
