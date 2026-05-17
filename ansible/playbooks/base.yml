@@ -2,24 +2,23 @@
 # Run on every VM immediately after Terraform provisions it.
 # Extends LVM to fill the full disk, sets hostname, hardens SSH,
 # and installs common packages.
-- name: base | bootstrap all nodes
-  hosts: all
+- name: base | bootstrap all cluster nodes
+  hosts: cluster
   become: true
 
   tasks:
-    # ── Disk: extend LVM to fill provisioned disk ───────────────────────────
+    # ── Disk: extend LVM to fill any free disk space ────────────────────────
+    # vault-server (source for clones) uses VG `rlm` with LVs root/var/apps/home.
+    # If the underlying vmdk was extended (vmkfstools -X), growpart+pvresize+lvol
+    # reclaims it. If the disk wasn't extended, these become no-ops.
     - name: install growpart
       dnf:
         name: cloud-utils-growpart
         state: present
 
-    # ks.cfg layout: sda1=/boot, sda2=LVM PV (vg_system).
-    # Terraform clones the 20 GB template to a larger disk; grow the PV
-    # partition (sda2) and the root LV to reclaim the extra space.
     - name: extend LVM PV partition (sda2)
       command: growpart /dev/sda 2
       register: growpart_out
-      # growpart exits 1 when nothing to do — treat as ok
       failed_when: growpart_out.rc not in [0, 1]
       changed_when: "'CHANGED' in growpart_out.stdout"
 
@@ -27,12 +26,24 @@
       command: pvresize /dev/sda2
       changed_when: true
 
-    - name: extend lv_root with all free space
+    - name: detect main VG name
+      shell: vgs --noheadings -o vg_name | head -1 | tr -d ' '
+      register: main_vg
+      changed_when: false
+
+    - name: check VG has free space
+      shell: vgs --noheadings -o vg_free --units b {{ main_vg.stdout }} | awk '{print $1+0}'
+      register: vg_free_bytes
+      changed_when: false
+
+    # Extend /var (where /var/lib/containerd lives) only if VG has spare blocks.
+    - name: extend var LV with all free space
       community.general.lvol:
-        vg: vg_system
-        lv: lv_root
+        vg: "{{ main_vg.stdout }}"
+        lv: var
         size: +100%FREE
         resizefs: true
+      when: (vg_free_bytes.stdout | int) > 1073741824   # > 1 GiB free worth extending
 
     # ── Hostname ────────────────────────────────────────────────────────────
     - name: set hostname to inventory name

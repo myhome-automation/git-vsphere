@@ -18,7 +18,7 @@ vip:          "192.168.1.50"
 http_port:    80
 https_port:   443
 k8s_api_port: 6443
-k8s_version:  "1.29"
+k8s_version:  "1.36"
 pod_network_cidr: "10.244.0.0/16"
 
 # Thin wrappers — reference vault vars so playbooks use plain names

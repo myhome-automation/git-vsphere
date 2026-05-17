@@ -79,15 +79,19 @@
       notify: restart haproxy
 
     # ── keepalived (VIP failover) ────────────────────────────────────────────
+    # Single-LB mode: only lb1 exists in this cluster (lb2 was dropped due
+    # to memory ceiling on the host). keepalived runs standalone as MASTER
+    # — it owns the VIP at all times; no failover peer.
+    # Interface auto-detected via ansible facts (ens192 on vmxnet3, not eth0).
     - name: write keepalived config
       copy:
         dest: /etc/keepalived/keepalived.conf
         content: |
           vrrp_instance VI_1 {
-            state {{ 'MASTER' if inventory_hostname == 'lb1' else 'BACKUP' }}
-            interface eth0
+            state MASTER
+            interface {{ ansible_default_ipv4.interface }}
             virtual_router_id 51
-            priority {{ '101' if inventory_hostname == 'lb1' else '100' }}
+            priority 101
             advert_int 1
             authentication {
               auth_type PASS
@@ -126,6 +130,15 @@
         value: "1"
         sysctl_file: /etc/sysctl.d/lb.conf
         reload: true
+
+    # SELinux blocks haproxy from binding to non-standard ports (6443 for
+    # the k8s API frontend, 8404 for stats). This boolean allows haproxy
+    # to bind/connect to arbitrary ports.
+    - name: allow haproxy to bind any port (SELinux)
+      seboolean:
+        name: haproxy_connect_any
+        state: true
+        persistent: true
 
     - name: enable and start haproxy
       systemd:

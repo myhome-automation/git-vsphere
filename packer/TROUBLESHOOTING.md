@@ -613,3 +613,80 @@ a running VM in tight loops. Use `vmkfstools` directly while source is off.
    ```
 4. Memory pressure debugging: `vsish -e get /memory/comprehensive | grep -i free`
    and `grep -E "Initial VMX memory" /var/log/hostd.log`.
+
+---
+
+# PART 3 — Ansible / cluster provisioning gotchas
+
+## J. `group_vars/` must live next to inventory or next to playbooks, NOT in `ansible/`
+Repo layout had `ansible/group_vars/all/vars.yml` with `k8s_version`, `vip`,
+`k8s_api_port`, etc. Plays failed with `'<var>' is undefined` even though
+`ansible-playbook` was run from `ansible/`. Ansible only auto-loads
+`group_vars/` from:
+- `<inventory_dir>/group_vars/`  (so `ansible/inventory/group_vars/`)
+- `<playbook_dir>/group_vars/`  (so `ansible/playbooks/group_vars/`)
+
+**Fix:** symlink: `ln -sfn ../group_vars ansible/inventory/group_vars`
+(verify with `ansible -i inventory/hosts.ini -m debug -a 'msg="{{ vip }}"' lb1`).
+
+## K. dnsmasq `addn-hosts=` file CANNOT be inside `/etc/dnsmasq.d/`
+dnsmasq's default `conf-dir=/etc/dnsmasq.d,.rpmnew,.rpmsave,.rpmorig` reads
+EVERY non-excluded file as config. Dropping `myhomelab.hosts` (containing
+`192.168.1.186 kmaster1.myhomelab.com kmaster1` etc.) in there made dnsmasq
+fail with `bad option at line 1 of /etc/dnsmasq.d/myhomelab.hosts`.
+
+**Fix:** put hosts file outside conf-dir — e.g.,
+`/etc/dnsmasq.hosts.d/myhomelab.hosts` referenced from a config file as
+`addn-hosts=/etc/dnsmasq.hosts.d/myhomelab.hosts`.
+
+## L. HAProxy on Rocky 9: SELinux blocks bind to non-standard ports
+HAProxy fronts the k8s API on TCP 6443 and exposes stats on 8404 — neither
+is in SELinux's `http_port_t`. HAProxy fails with
+`Binding ... cannot bind socket (Permission denied) for [0.0.0.0:6443]`.
+
+**Fix:**
+```yaml
+- name: allow haproxy to bind any port (SELinux)
+  seboolean: { name: haproxy_connect_any, state: true, persistent: true }
+```
+
+## M. `inventory_hostname == 'lb1'` doesn't help with single-LB keepalived
+Previous loadbalancer.yml had a pair (lb1 MASTER / lb2 BACKUP) keyed on
+`inventory_hostname`. With lb2 dropped, the conditional is fine (lb1 still
+matches and becomes MASTER) — but the VRRP MASTER alone has no peer.
+Acceptable: keepalived will still own the VIP at all times. Just be aware
+there's no failover.
+
+Also: `interface eth0` was hardcoded; Rocky 9 on vmxnet3 uses `ens192`. Use
+`{{ ansible_default_ipv4.interface }}` for portability.
+
+## N. base.yml `hosts: all` would touch vault-server
+With vault-server in the inventory (so bootstrap-users.yml can include it),
+`hosts: all` includes vault-server too. The k8s site.yml plays should target
+the `cluster` group (k8s_masters + k8s_workers + dns_dhcp + loadbalancers).
+Inventory has `[cluster:children]` for this. base.yml now uses `hosts: cluster`.
+
+## O. vault-server's VG/LV names differ from packer template assumptions
+Original base.yml expected `vg_system` / `lv_root` (what the packer ks.cfg
+would have created). Clones inherit vault-server's actual VG named `rlm`
+with LVs `root`/`var`/`apps`/`home`. The LV-extension task now:
+1. Auto-detects VG name via `vgs --noheadings -o vg_name | head -1`.
+2. Extends the `var` LV (where `/var/lib/containerd` lives) when VG has
+   >1 GiB free; otherwise skips.
+
+Also: `vmkfstools -X` during clone-from-vault.sh silently no-ops in some
+states. Clones may stay at 30 GB even though we asked for 50/100 GB. To
+actually extend, power off the VM and re-run vmkfstools -X manually.
+
+## P. Kubernetes 1.36 packages — verify channel exists before bumping
+`https://pkgs.k8s.io/core:/stable:/v1.36/rpm/` was confirmed to serve
+v1.36.1 (current stable as of 2026-05-16). Always check
+`https://dl.k8s.io/release/stable.txt` before bumping `k8s_version`.
+
+## Q. Internal DNS lives on lb1 (myhomelab.com), not dns1
+Pivoted away from dns1's dns_dhcp role to dnsmasq on lb1 serving
+`myhomelab.com` with auto-generated reverse zones. All hosts (including
+vault-server) configured via `nmcli connection modify ... ipv4.dns ...
+ipv4.ignore-auto-dns yes` to use 192.168.1.188 (lb1) first, then 8.8.8.8.
+The dns_dhcp.yml playbook is no longer in site.yml; dns1 VM is unused
+(candidate for deletion to free 1 GB RAM).

@@ -1,0 +1,143 @@
+---
+# dns.yml
+#
+# Internal DNS for myhomelab.com served by lb1 (192.168.1.188) via dnsmasq.
+# Provides forward + reverse lookups for the cluster:
+#   kmaster1.myhomelab.com -> 192.168.1.186  (forward A)
+#   1.186.192.168.in-addr.arpa -> kmaster1.myhomelab.com  (PTR auto-generated)
+# Upstream queries (not myhomelab.com) forwarded to 8.8.8.8 / 8.8.4.4.
+#
+# All cluster + vault hosts get /etc/resolv.conf pointing at lb1 first, with
+# 8.8.8.8 as fallback.
+
+- name: dns | install authoritative dnsmasq on lb1
+  hosts: lb1
+  become: true
+  vars:
+    internal_domain: myhomelab.com
+    # All hosts that get internal DNS entries
+    dns_hosts:
+      - { name: kmaster1, ip: 192.168.1.186 }
+      - { name: kmaster2, ip: 192.168.1.189 }
+      - { name: kmaster3, ip: 192.168.1.187 }
+      - { name: kworker1, ip: 192.168.1.182 }
+      - { name: kworker2, ip: 192.168.1.183 }
+      - { name: kworker3, ip: 192.168.1.184 }
+      - { name: dns1,     ip: 192.168.1.185 }
+      - { name: lb1,      ip: 192.168.1.188 }
+      - { name: vault,    ip: 192.168.1.202 }
+      - { name: k8s,      ip: 192.168.1.50 }  # cluster API VIP (vip)
+  tasks:
+    - name: install dnsmasq
+      dnf:
+        name: dnsmasq
+        state: present
+
+    # addn-hosts file with FQDNs. Must live OUTSIDE /etc/dnsmasq.d/ — dnsmasq
+    # parses every file under conf-dir as config, not as a hosts file, so
+    # we put it at /etc/dnsmasq.hosts.d/ instead.
+    # `expand-hosts` makes dnsmasq attach the domain suffix to short names
+    # and auto-generates PTR records from these entries.
+    - name: ensure hosts dir exists
+      file:
+        path: /etc/dnsmasq.hosts.d
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: write internal zone hosts file
+      copy:
+        dest: /etc/dnsmasq.hosts.d/myhomelab.hosts
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          {% for h in dns_hosts %}
+          {{ h.ip }} {{ h.name }}.{{ internal_domain }} {{ h.name }}
+          {% endfor %}
+      notify: restart dnsmasq
+
+    - name: write dnsmasq main config
+      copy:
+        dest: /etc/dnsmasq.d/myhomelab.conf
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          # Authoritative for myhomelab.com only; no DHCP.
+          domain={{ internal_domain }}
+          local=/{{ internal_domain }}/
+          expand-hosts
+
+          # External addn-hosts (the only source of A records — skip /etc/hosts)
+          no-hosts
+          addn-hosts=/etc/dnsmasq.hosts.d/myhomelab.hosts
+
+          # Listen on management interface + loopback only
+          listen-address=127.0.0.1,{{ ansible_default_ipv4.address }}
+          bind-interfaces
+
+          # Upstream resolvers for everything not under myhomelab.com
+          no-resolv
+          server=8.8.8.8
+          server=8.8.4.4
+
+          # Cache + log
+          cache-size=1000
+          log-queries
+          log-facility=/var/log/dnsmasq.log
+      notify: restart dnsmasq
+
+    - name: open DNS port (TCP+UDP 53) on firewalld
+      firewalld:
+        port: "{{ item }}"
+        permanent: true
+        immediate: true
+        state: enabled
+      loop:
+        - 53/tcp
+        - 53/udp
+
+    - name: enable and start dnsmasq
+      systemd:
+        name: dnsmasq
+        state: started
+        enabled: true
+
+  handlers:
+    - name: restart dnsmasq
+      systemd:
+        name: dnsmasq
+        state: restarted
+
+# ── Point every cluster + vault host at lb1 for DNS ───────────────────────
+- name: dns | configure resolver on all hosts to use lb1
+  hosts: everyone
+  become: true
+  vars:
+    dns_server_ip: 192.168.1.188      # lb1
+    internal_domain: myhomelab.com
+  tasks:
+    # NetworkManager owns /etc/resolv.conf on Rocky 9. Setting per-connection
+    # ipv4.dns and ipv4.dns-search and applying it makes the changes persist
+    # across reboots and DHCP renewals.
+    - name: get primary NM connection name
+      shell: >
+        nmcli -t -f NAME,DEVICE connection show --active |
+        awk -F: -v iface="{{ ansible_default_ipv4.interface }}" '$2==iface {print $1; exit}'
+      register: nm_conn
+      changed_when: false
+
+    - name: set DNS server via NetworkManager (override DHCP)
+      command: >
+        nmcli connection modify "{{ nm_conn.stdout }}"
+        ipv4.dns "{{ dns_server_ip }} 8.8.8.8"
+        ipv4.dns-search "{{ internal_domain }}"
+        ipv4.ignore-auto-dns yes
+      register: nm_modify
+      changed_when: true
+
+    - name: reapply NetworkManager connection to push DNS change
+      command: nmcli connection up "{{ nm_conn.stdout }}"
+      when: nm_modify is changed
