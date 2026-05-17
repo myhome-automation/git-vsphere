@@ -36,9 +36,11 @@ All ansible commands must be run from the `ansible/` directory — the vault pas
 
 `kubectl` on the workstation has two contexts (`~/.kube/config` merged):
 - **`homelab`** — this repo's vsphere cluster (server `https://192.168.1.50:6443`).
-- **`k3os-local`** — the workstation's local k3OS cluster, used for building docker images. Don't delete or rename it.
+- **`k3os-local`** — the workstation's local k3s cluster on `gdragon` (192.168.1.181). Hosts the cross-cluster monitoring stack (Grafana / Prometheus / Loki) — see `monitoring/README.md`. Don't delete the namespaces `argocd`, `monitoring`, `calico-system`, `calico-apiserver`, `tigera-operator`, or `kube-system` on this cluster.
 
 Switch with `kubectl config use-context <name>` or use `--context <name>` per command. Refresh / re-fetch the homelab kubeconfig with `scripts/fetch-kubeconfig.sh homelab 192.168.1.186` (the script is generic: `fetch-kubeconfig.sh <ctx> <host> [user] [key] [path]`).
+
+Cross-cluster monitoring: Grafana at `http://192.168.1.181:30300` (admin / `changeme-home-lab`). homelab Prometheus remote_writes to local Prometheus (`:30320`); Promtail DaemonSets on both clusters push to local Loki (`:30310`). Both data sources are tagged with `cluster=homelab` or `cluster=k3os-local`. Full architecture, install commands, and gotchas in `monitoring/README.md`.
 
 ```bash
 cd ansible/

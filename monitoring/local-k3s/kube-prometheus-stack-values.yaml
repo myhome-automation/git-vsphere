@@ -1,0 +1,112 @@
+# Values for kube-prometheus-stack on the LOCAL k3s (single-node, 5.8 GiB RAM).
+# Tuned for low resource use; Prometheus accepts remote_write from the
+# homelab cluster so a single Grafana sees metrics from both clusters.
+#
+# Install:
+#   helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+#   helm repo update
+#   helm --kube-context k3os-local upgrade --install kps \
+#     prometheus-community/kube-prometheus-stack \
+#     -n monitoring --create-namespace \
+#     -f monitoring/local-k3s/kube-prometheus-stack-values.yaml
+#
+# Access Grafana:
+#   kubectl --context k3os-local -n monitoring get svc grafana
+#   # default user: admin   password: see `grafana.adminPassword` below
+
+fullnameOverride: kps
+
+# ── Prometheus ────────────────────────────────────────────────────────────
+prometheus:
+  prometheusSpec:
+    # External label so remote_write from homelab can distinguish source clusters.
+    externalLabels:
+      cluster: k3os-local
+    # Accept remote_write from homelab Prometheus.
+    enableRemoteWriteReceiver: true
+    # Modest retention — local k3s only has 41 GiB free disk.
+    retention: 7d
+    retentionSize: 8GiB
+    # Single replica is fine for home lab.
+    replicas: 1
+    resources:
+      requests: { cpu: 100m, memory: 512Mi }
+      limits:   { cpu: 1000m, memory: 1500Mi }
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: local-path     # k3s default
+          accessModes: [ReadWriteOnce]
+          resources:
+            requests: { storage: 10Gi }
+    # Discover ServiceMonitors regardless of helm label (so external manifests work).
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    probeSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+
+  service:
+    # NodePort so the homelab cluster can remote_write to:
+    #   http://<workstation-IP>:30320/api/v1/write
+    type: NodePort
+    nodePort: 30320
+
+# ── Grafana ───────────────────────────────────────────────────────────────
+grafana:
+  adminPassword: "changeme-home-lab"   # rotate via `helm upgrade --set grafana.adminPassword=...`
+  defaultDashboardsTimezone: "America/Chicago"
+  persistence:
+    enabled: true
+    storageClassName: local-path
+    size: 2Gi
+  resources:
+    requests: { cpu: 50m,  memory: 128Mi }
+    limits:   { cpu: 500m, memory: 512Mi }
+  service:
+    type: NodePort
+    nodePort: 30300       # http://<workstation-IP>:30300
+  # Loki datasource is added by loki-stack chart's grafana subchart, but we
+  # disable that subchart and add the datasource here so the Grafana picks
+  # it up once Loki is installed at the documented URL.
+  additionalDataSources:
+    - name: Loki
+      type: loki
+      url: http://loki.monitoring.svc:3100
+      access: proxy
+
+# ── Alertmanager ──────────────────────────────────────────────────────────
+# Keep it but tiny — home lab doesn't need pager-grade alerting.
+alertmanager:
+  alertmanagerSpec:
+    replicas: 1
+    resources:
+      requests: { cpu: 10m, memory: 32Mi }
+      limits:   { cpu: 200m, memory: 128Mi }
+    storage:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: local-path
+          accessModes: [ReadWriteOnce]
+          resources:
+            requests: { storage: 1Gi }
+
+# ── Kube-state-metrics ────────────────────────────────────────────────────
+kube-state-metrics:
+  resources:
+    requests: { cpu: 10m, memory: 32Mi }
+    limits:   { cpu: 200m, memory: 128Mi }
+
+# ── prometheus-node-exporter (DaemonSet) ──────────────────────────────────
+prometheus-node-exporter:
+  resources:
+    requests: { cpu: 10m, memory: 16Mi }
+    limits:   { cpu: 100m, memory: 64Mi }
+
+# ── Disable scrapes that don't apply to k3s ───────────────────────────────
+# k3s collapses control-plane components into a single binary — no separate
+# kube-controller-manager / kube-scheduler / kube-proxy / kube-etcd Services
+# to scrape on default k3s.
+kubeControllerManager: { enabled: false }
+kubeScheduler:         { enabled: false }
+kubeProxy:             { enabled: false }
+kubeEtcd:              { enabled: false }

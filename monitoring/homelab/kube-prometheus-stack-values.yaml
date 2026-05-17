@@ -1,0 +1,65 @@
+# Values for kube-prometheus-stack on the HOMELAB cluster.
+# Role: scrape locally, remote_write everything to the LOCAL k3s Prometheus
+# so the workstation's Grafana sees both clusters under one tenant.
+#
+# Grafana + Alertmanager are intentionally DISABLED here (they live on local).
+#
+# Install:
+#   helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+#   helm repo update
+#   helm --kube-context homelab upgrade --install kps \
+#     prometheus-community/kube-prometheus-stack \
+#     -n monitoring --create-namespace \
+#     -f monitoring/homelab/kube-prometheus-stack-values.yaml
+
+fullnameOverride: kps
+
+# ── Prometheus on the homelab side ────────────────────────────────────────
+prometheus:
+  prometheusSpec:
+    externalLabels:
+      cluster: homelab
+    # remote_write to the local k3s Prometheus NodePort.
+    # Workstation runs k3s at 192.168.1.181; the NodePort 30320 is exposed
+    # by `prometheus.service.nodePort` in monitoring/local-k3s/.
+    remoteWrite:
+      - url: http://192.168.1.181:30320/api/v1/write
+        writeRelabelConfigs:
+          # Drop very high-cardinality series we don't need cross-cluster.
+          - sourceLabels: [__name__]
+            regex: 'go_.*|process_.*|prometheus_.*'
+            action: drop
+    # Short local retention — long-term storage lives on the local cluster.
+    retention: 6h
+    retentionSize: 4GiB
+    replicas: 1
+    resources:
+      requests: { cpu: 200m, memory: 1Gi }
+      limits:   { cpu: 1500m, memory: 2Gi }
+    # Homelab has no dynamic-PV provisioner yet — use emptyDir.
+    # Metrics survive remote_write; local pod restart only loses ~5 s of buffer.
+    storageSpec: {}
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    probeSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+
+# Grafana + Alertmanager live on the local k3s, not here.
+grafana:
+  enabled: false
+alertmanager:
+  enabled: false
+
+# kube-state-metrics + node-exporter still scraped here (Prometheus is the
+# scrape engine), they just get shipped onward via remote_write.
+kube-state-metrics:
+  resources:
+    requests: { cpu: 20m, memory: 64Mi }
+    limits:   { cpu: 500m, memory: 256Mi }
+prometheus-node-exporter:
+  resources:
+    requests: { cpu: 10m, memory: 32Mi }
+    limits:   { cpu: 200m, memory: 128Mi }
+
+# kubeadm-deployed cluster has all control-plane components exposed,
+# leave the defaults (true) so they get scraped.

@@ -1,0 +1,58 @@
+# Values for loki-stack on the LOCAL k3s.
+# Installs:
+#   - Loki (single-binary mode)
+#   - Promtail DaemonSet on this node (ships local k3s logs to Loki)
+# Grafana from kube-prometheus-stack adds Loki as a datasource (see that file).
+#
+# Install:
+#   helm repo add grafana https://grafana.github.io/helm-charts
+#   helm repo update
+#   helm --kube-context k3os-local upgrade --install loki \
+#     grafana/loki-stack \
+#     -n monitoring --create-namespace \
+#     -f monitoring/local-k3s/loki-stack-values.yaml
+#
+# Accept logs from the homelab cluster via Promtail there pointing at:
+#   http://<workstation-IP>:30310/loki/api/v1/push    (NodePort on Loki below)
+
+loki:
+  enabled: true
+  isDefault: false           # kube-prometheus-stack's Grafana is already adding it
+  persistence:
+    enabled: true
+    storageClassName: local-path
+    size: 5Gi
+  resources:
+    requests: { cpu: 50m,  memory: 128Mi }
+    limits:   { cpu: 500m, memory: 512Mi }
+  service:
+    type: NodePort
+    port: 3100
+    nodePort: 30310          # http push endpoint for homelab Promtail
+  config:
+    auth_enabled: false
+    limits_config:
+      retention_period: 168h   # 7 days
+      max_global_streams_per_user: 5000
+
+promtail:
+  enabled: true
+  # Tag every log line with cluster=k3os-local so it's distinguishable
+  # from homelab-cluster logs in Loki queries.
+  extraArgs:
+    - -client.external-labels=cluster=k3os-local
+  resources:
+    requests: { cpu: 10m, memory: 32Mi }
+    limits:   { cpu: 200m, memory: 128Mi }
+
+# kube-prometheus-stack provides Grafana; don't install another one here.
+grafana:
+  enabled: false
+
+# kube-prometheus-stack already brings Prometheus; don't duplicate.
+prometheus:
+  enabled: false
+
+# fluent-bit superseded by promtail.
+fluent-bit:
+  enabled: false
