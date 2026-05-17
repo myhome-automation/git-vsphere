@@ -27,3 +27,12 @@
 
 - import_playbook: k8s_worker.yml
   tags: [k8s, k8s_worker]
+
+# Replace Flannel (installed at master init) with Calico for NetworkPolicy
+# and Istio-compatible CNI behavior.
+- import_playbook: cni_calico.yml
+  tags: [k8s, calico, cni]
+
+# Service mesh.
+- import_playbook: istio.yml
+  tags: [k8s, istio, mesh]

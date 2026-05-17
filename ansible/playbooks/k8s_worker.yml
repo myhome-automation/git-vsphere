@@ -55,10 +55,11 @@
         name: containerd.io
         state: present
 
-    - name: generate default containerd config
+    # See k8s_master.yml: Rocky's shipped config disables CRI which makes
+    # kubeadm fail. Always regenerate from `containerd config default`.
+    - name: generate default containerd config (CRI enabled)
       shell: containerd config default > /etc/containerd/config.toml
-      args:
-        creates: /etc/containerd/config.toml
+      notify: restart containerd
 
     - name: set SystemdCgroup = true in containerd config
       replace:

@@ -1,0 +1,128 @@
+# Kubernetes cluster — issues & fixes
+
+Cluster topology: 3 masters (kmaster1-3) + 3 workers (kworker1-3) + single
+loadbalancer (lb1). API VIP `192.168.1.50:6443`. Pod CIDR `10.244.0.0/16`
+(Flannel). Version target: **k8s 1.36.1**.
+
+---
+
+## I1. `kubeadm init` fails with "unknown service runtime.v1.RuntimeService"
+
+**Symptom (kmaster1):**
+```
+[preflight] Some fatal errors occurred:
+  [ERROR CRI]: could not connect to the container runtime: failed to create
+    new CRI runtime service: validate service connection: validate CRI v1
+    runtime API for endpoint "unix:///var/run/containerd/containerd.sock":
+    rpc error: code = Unimplemented desc = unknown service runtime.v1.RuntimeService
+```
+
+**Root cause:** Rocky 9's containerd RPM ships `/etc/containerd/config.toml`
+with `disabled_plugins = ["cri"]`. The ansible task generating the default
+config used `creates: /etc/containerd/config.toml` which silently skipped
+overwriting the Rocky default — CRI never got enabled.
+
+**Fix:** Always regenerate the config (no `creates:` guard). The
+CRI-enabled output from `containerd config default` is what kubeadm needs.
+
+```yaml
+- name: generate default containerd config (CRI enabled)
+  shell: containerd config default > /etc/containerd/config.toml
+  notify: restart containerd
+```
+
+Then `SystemdCgroup = true` so kubelet's cgroup driver matches.
+
+---
+
+## I2. Verifying Kubernetes channel before bumping `k8s_version`
+
+The repo URL is `https://pkgs.k8s.io/core:/stable:/v{{ k8s_version }}/rpm/`.
+Channels exist per minor (v1.30, v1.31, ... v1.36). If you bump to a minor
+that's not yet released, dnf will fail with 404s.
+
+**Verify before bumping:**
+```bash
+curl -s https://dl.k8s.io/release/stable.txt
+# -> v1.36.1   (as of 2026-05-16)
+
+curl -sI https://pkgs.k8s.io/core:/stable:/v1.36/rpm/repodata/repomd.xml
+# -> HTTP/2 302 (channel exists)
+```
+
+`k8s_version` is set in `ansible/group_vars/all/vars.yml`. Both
+`k8s_master.yml` and `k8s_worker.yml` interpolate it into the
+`/etc/yum.repos.d/kubernetes.repo` baseurl.
+
+---
+
+## I3. Single-LB API endpoint (no peer)
+
+With `lb2` dropped (memory ceiling), `lb1` runs keepalived as MASTER alone
+— it owns the VIP `192.168.1.50` at all times but there's no failover.
+HAProxy on lb1 fronts the k8s API on port 6443 → backends kmaster1/2/3.
+
+kubeadm init uses `--control-plane-endpoint=192.168.1.50:6443` so etcd
+quorum, kube-apiserver TLS SANs, and worker join all go through the VIP.
+If lb1 goes down, the cluster API is unavailable until lb1 comes back.
+
+**To survive lb1 outage**: add lb2 back (need to free 2 GB on host first;
+see [esxi-host.md](esxi-host.md)) and revert loadbalancer.yml to the
+MASTER/BACKUP keepalived config (look in git history).
+
+---
+
+## I4. Flannel CNI
+
+Master init plays `kubectl apply -f` on
+`https://raw.githubusercontent.com/flannel-io/flannel/master/Documentation/kube-flannel.yml`
+after the first master init.
+
+If pods stay in `ContainerCreating` after install, check:
+```bash
+kubectl -n kube-flannel get pods
+kubectl -n kube-flannel logs <flannel-pod>
+journalctl -u kubelet | tail -50
+```
+
+Common issues:
+- `br_netfilter` module missing → check `lsmod | grep br_netfilter`,
+  reload via `modprobe br_netfilter` (the base.yml task does this).
+- `net.bridge.bridge-nf-call-iptables=0` → reset via the sysctl task.
+- Pod CIDR mismatch → kubeadm init was given `--pod-network-cidr=10.244.0.0/16`,
+  Flannel default expects `10.244.0.0/16` — confirm both match.
+
+---
+
+## I5. Joining additional masters / workers
+
+The playbook handles joins automatically via delegated commands:
+
+- **Master joins** (kmaster2/3): `serial: 1` so each joins fully before the
+  next starts (avoids etcd quorum split during bootstrap). Uses a freshly
+  generated cert-key via `kubeadm init phase upload-certs --upload-certs`
+  on kmaster1.
+- **Worker joins** (kworker1/2/3): runs `kubeadm token create
+  --print-join-command` on kmaster1 (delegated), then executes on each
+  worker. Idempotent via `stat: /etc/kubernetes/kubelet.conf` check.
+
+To manually re-issue a join token (e.g. after the 2 h cert-key expires):
+```bash
+ssh ansible@<kmaster1>
+sudo kubeadm token create --print-join-command
+sudo kubeadm init phase upload-certs --upload-certs
+```
+
+---
+
+## I6. Fetching kubeconfig to your workstation
+
+```bash
+scp -i /apps/git-code/keys/ansible-key ansible@192.168.1.186:/root/.kube/config ~/.kube/vsphere-cluster.config
+# Edit ~/.kube/vsphere-cluster.config: server: https://192.168.1.186:6443 -> https://192.168.1.50:6443
+export KUBECONFIG=~/.kube/vsphere-cluster.config
+kubectl get nodes -o wide
+```
+
+The copy on kmaster1 has `server: https://192.168.1.50:6443` already since
+the cluster was init'd with that endpoint, but verify.

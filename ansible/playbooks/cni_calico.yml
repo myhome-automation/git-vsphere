@@ -1,0 +1,81 @@
+---
+# cni_calico.yml
+#
+# Replace the default Flannel CNI (installed by k8s_master.yml on first
+# init) with Calico (Tigera operator + custom resource). Calico gives us
+# NetworkPolicy support and is the default CNI for Istio's installation
+# requirements.
+#
+# Idempotent: re-running just re-applies the manifests (kubectl apply).
+#
+# Reference: https://docs.tigera.io/calico/latest/getting-started/kubernetes/quickstart
+- name: calico | install Calico CNI (replace Flannel)
+  hosts: kmaster1
+  become: true
+  vars:
+    calico_version: v3.30.4
+    pod_cidr: 10.244.0.0/16    # must match kubeadm --pod-network-cidr
+  environment:
+    KUBECONFIG: /root/.kube/config
+
+  tasks:
+    - name: remove flannel (if present)
+      command: kubectl delete -f https://raw.githubusercontent.com/flannel-io/flannel/master/Documentation/kube-flannel.yml --ignore-not-found
+      changed_when: false
+
+    - name: wait briefly for flannel pods to terminate
+      command: kubectl wait --for=delete pod -l app=flannel -n kube-flannel --timeout=60s
+      register: flannel_wait
+      changed_when: false
+      failed_when: false
+
+    - name: install Tigera operator
+      command: kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/{{ calico_version }}/manifests/tigera-operator.yaml
+      register: tigera_install
+      changed_when: tigera_install.rc == 0
+      failed_when: tigera_install.rc != 0 and 'AlreadyExists' not in tigera_install.stderr
+
+    - name: write Calico Installation CR (uses our pod CIDR)
+      copy:
+        dest: /root/calico-installation.yaml
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          apiVersion: operator.tigera.io/v1
+          kind: Installation
+          metadata:
+            name: default
+          spec:
+            calicoNetwork:
+              ipPools:
+              - blockSize: 26
+                cidr: {{ pod_cidr }}
+                encapsulation: VXLANCrossSubnet
+                natOutgoing: Enabled
+                nodeSelector: all()
+          ---
+          apiVersion: operator.tigera.io/v1
+          kind: APIServer
+          metadata:
+            name: default
+          spec: {}
+
+    - name: apply Calico installation
+      command: kubectl apply -f /root/calico-installation.yaml
+      register: calico_apply
+      changed_when: "'unchanged' not in calico_apply.stdout"
+
+    - name: wait for Calico to be ready (up to 5 min)
+      command: kubectl wait --for=condition=Ready tigerastatus/calico --timeout=300s
+      register: calico_ready
+      changed_when: false
+      failed_when: false
+
+    - name: show calico status
+      command: kubectl get tigerastatus
+      register: tigera_status
+      changed_when: false
+
+    - debug:
+        var: tigera_status.stdout_lines

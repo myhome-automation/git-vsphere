@@ -58,10 +58,14 @@
         name: containerd.io
         state: present
 
-    - name: generate default containerd config
+    # Rocky 9 ships /etc/containerd/config.toml with `disabled_plugins=["cri"]`,
+    # which makes kubeadm preflight fail with
+    #   "unknown service runtime.v1.RuntimeService"
+    # `containerd config default` emits the CRI-enabled variant; ALWAYS
+    # regenerate (no `creates:` guard) so a stock Rocky default doesn't win.
+    - name: generate default containerd config (CRI enabled)
       shell: containerd config default > /etc/containerd/config.toml
-      args:
-        creates: /etc/containerd/config.toml
+      notify: restart containerd
 
     - name: set SystemdCgroup = true in containerd config
       replace:

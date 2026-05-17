@@ -1,0 +1,93 @@
+---
+# istio.yml
+#
+# Install Istio service mesh on the cluster. Uses istioctl with the
+# `default` profile (smaller than `demo`, suitable for production but
+# without extra add-ons like Kiali / Jaeger pre-installed).
+#
+# Runs on kmaster1 (any master with admin.conf would do; we use the
+# first one for consistency with k8s_master.yml).
+#
+# Idempotent: re-running with the same version just verifies. To upgrade,
+# bump istio_version and run again — istioctl handles in-place upgrades.
+#
+# Reference: https://istio.io/latest/docs/setup/install/istioctl/
+- name: istio | install service mesh
+  hosts: kmaster1
+  become: true
+  vars:
+    istio_version: 1.27.2
+    istio_install_dir: /opt/istio
+    istio_profile: default
+  environment:
+    KUBECONFIG: /root/.kube/config
+
+  tasks:
+    - name: create install dir
+      file:
+        path: "{{ istio_install_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: download istioctl tarball
+      get_url:
+        url: "https://github.com/istio/istio/releases/download/{{ istio_version }}/istio-{{ istio_version }}-linux-amd64.tar.gz"
+        dest: "{{ istio_install_dir }}/istio-{{ istio_version }}-linux-amd64.tar.gz"
+        mode: '0644'
+        timeout: 120
+
+    - name: extract istioctl
+      unarchive:
+        src: "{{ istio_install_dir }}/istio-{{ istio_version }}-linux-amd64.tar.gz"
+        dest: "{{ istio_install_dir }}"
+        remote_src: true
+        creates: "{{ istio_install_dir }}/istio-{{ istio_version }}"
+
+    - name: symlink istioctl into /usr/local/bin
+      file:
+        src: "{{ istio_install_dir }}/istio-{{ istio_version }}/bin/istioctl"
+        dest: /usr/local/bin/istioctl
+        state: link
+        force: true
+
+    - name: check if istio is already installed
+      command: kubectl get namespace istio-system
+      register: istio_ns
+      changed_when: false
+      failed_when: false
+
+    - name: install Istio control plane (istioctl install)
+      command: istioctl install --set profile={{ istio_profile }} -y
+      register: istio_install
+      when: istio_ns.rc != 0
+      changed_when: istio_install.rc == 0
+
+    - name: label default namespace for istio sidecar injection
+      command: kubectl label namespace default istio-injection=enabled --overwrite
+      changed_when: true
+
+    - name: wait for istiod to be ready
+      command: kubectl -n istio-system wait --for=condition=available --timeout=180s deployment/istiod
+      register: istiod_ready
+      changed_when: false
+
+    - name: get istio status
+      command: kubectl -n istio-system get pods -o wide
+      register: istio_pods
+      changed_when: false
+
+    - debug:
+        msg: |
+          Istio installed.
+          Profile: {{ istio_profile }}
+          Pods:
+          {{ istio_pods.stdout }}
+
+          Next steps (optional, run from kmaster1 as root):
+            # Install observability add-ons (Kiali, Jaeger, Prometheus, Grafana):
+            kubectl apply -f {{ istio_install_dir }}/istio-{{ istio_version }}/samples/addons/
+
+            # Expose istio-ingressgateway via LoadBalancer or NodePort
+            kubectl -n istio-system get svc istio-ingressgateway
