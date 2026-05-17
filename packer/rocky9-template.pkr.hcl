@@ -14,8 +14,8 @@ source "vmware-iso" "rocky9" {
   remote_username          = "root"
   remote_password          = var.esxi_password
   remote_datastore         = "datastore1"
-  remote_cache_datastore   = "datastore1"
-  remote_cache_directory   = "iso_file"
+  remote_cache_datastore   = "datastore2"
+  remote_cache_directory   = "iso-image"
 
   # ── VM definition ──────────────────────────────────────────────────────────
   vm_name           = "rocky9-template"
@@ -25,34 +25,60 @@ source "vmware-iso" "rocky9" {
   cpus              = 2
   memory            = 2048
   disk_size         = 20480         # 20 GB — Terraform expands per node role
-  disk_adapter_type = "lsilogic"
+  disk_adapter_type = "pvscsi"      # VMware paravirtual — vmw_pvscsi always in Rocky 9 initramfs
   disk_type_id      = "thin"
 
   network_adapter_type = "vmxnet3"
   network              = "VM Network"
 
-  # ── ISO — already on ESXi datastore ───────────────────────────────────────
-  # Packer checks remote_cache_datastore/remote_cache_directory/<filename> first.
-  # Since Rocky-9.1-x86_64-minimal.iso is already at [datastore1] iso_file/,
-  # the file is found and the download from iso_url is skipped entirely.
-  iso_url      = "file:///tmp/Rocky-9.1-x86_64-minimal.iso"
-  iso_checksum = "none"
+  # ── ISO — staged at /tmp locally and at [datastore2] iso-image/ on ESXi ──
+  # Packer verifies the local file matches iso_checksum, then checks
+  # remote_cache_datastore/remote_cache_directory/<filename> on the ESXi side
+  # and uses that copy if present (no re-upload). SHA256 below is the value
+  # published in https://download.rockylinux.org/pub/rocky/9/isos/x86_64/CHECKSUM.
+  iso_url      = "file:///tmp/Rocky-9.7-x86_64-minimal.iso"
+  iso_checksum = "sha256:06b9e67a1ad7a992927022442837fa683fa846f9540d55090c84c4b2f31dc357"
 
-  # ── Kickstart via sudo HTTP server on 192.168.1.181:8200 ──────────────────
-  # Packer's own HTTP server (user cgroup) is blocked by systemd's sd_fw_ingress
-  # BPF filter. Running as root bypasses it. build.sh pre-renders ks.cfg and
-  # starts a sudo Python HTTP server before invoking packer.
+  # ── Kickstart via HTTP from ESXi ──────────────────────────────────────────
+  # build.sh renders ks.cfg locally with build_password substituted, scps it
+  # to ESXi /tmp/ks.cfg, and runs an nc loop on ESXi:8080 to serve it.
+  # No OEMDRV CD — only the install ISO is attached, so anaconda's `cdrom`
+  # directive in ks.cfg resolves to the install ISO unambiguously.
+  # See TROUBLESHOOTING.md Failed Approach #10/#11/#12/#13 for why OEMDRV
+  # was abandoned (anaconda's hd: block source can't double-mount the install
+  # CD that's already providing stage2).
 
-  # Rocky 9.1 minimal ISO uses ISOLINUX in BIOS mode:
-  #   NO <up> — <up> wraps ISOLINUX to the LAST item (Troubleshooting), not Install.
-  #   The default selected item is already "Install Rocky Linux 9.1".
-  #   <tab> appends to the current boot line; <enter> boots.
-  #   Kickstart served from ESXi host (192.168.1.174:8080) — same physical host
-  #   as the installer VM, so always reachable regardless of external firewall.
-  boot_wait = "15s"
+  # Rocky 9.7 minimal ISO — ISOLINUX in BIOS mode.
+  # boot_key_interval: ESXi VNC-over-WebSocket drops if keys sent too fast.
+  #
+  # Boot args:
+  #   inst.text             — TUI installer (no X)
+  #   inst.stage2=cdrom     — anaconda finds stage2 on the (only) CD
+  #   ip=dhcp               — force dracut to bring up DHCP early, BEFORE the
+  #                           kickstart fetch. Without this anaconda may fetch
+  #                           the URL before networking is ready → "failed to
+  #                           fetch kickstart" error
+  #   inst.ks=http://192.168.1.174:8080/ks.cfg
+  #                         — fetch kickstart from ESXi-side nc loop
+  #   inst.sshd             — start sshd in the installer environment so we can
+  #                           SSH in and look at /tmp/anaconda.log if install
+  #                           hangs (password "ansible" from rd.shell, root)
+  #   inst.nomediacheck     — skip anaconda's "It is not recommended to use
+  #                           this media" warning
+  #   rd.live.check=0       — disable dracut media verification at early boot
+  boot_wait         = "20s"
+  boot_key_interval = "200ms"
   boot_command = [
-    "<tab><wait2>",
-    " inst.text inst.stage2=cdrom inst.ks=http://192.168.1.174:8080/ks.cfg",
+    "<tab><wait3>",
+    " inst.text",
+    "<wait>",
+    " inst.stage2=cdrom",
+    "<wait>",
+    " ip=dhcp",
+    "<wait>",
+    " inst.ks=http://192.168.1.174:8080/ks.cfg",
+    "<wait>",
+    " inst.sshd inst.nomediacheck rd.live.check=0",
     "<enter><wait>"
   ]
 

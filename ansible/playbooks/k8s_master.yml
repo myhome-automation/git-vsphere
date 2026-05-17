@@ -136,7 +136,7 @@
     - name: kubeadm init
       command: >
         kubeadm init
-        --control-plane-endpoint="{{ ansible_host }}:6443"
+        --control-plane-endpoint="{{ vip }}:6443"
         --pod-network-cidr={{ pod_network_cidr }}
         --upload-certs
       register: kubeadm_init_out
@@ -161,3 +161,48 @@
       environment:
         KUBECONFIG: /root/.kube/config
       when: kubeadm_init_out is changed
+
+# ── Join additional control-plane nodes (kmaster2, kmaster3) ─────────────────
+# Run one at a time (serial: 1) so each node joins and becomes healthy before
+# the next one starts — avoids splitting the etcd quorum during bootstrap.
+- name: k8s_master | join additional control-plane nodes
+  hosts: kmaster2,kmaster3
+  become: true
+  serial: 1
+
+  tasks:
+    - name: check if already joined
+      stat:
+        path: /etc/kubernetes/admin.conf
+      register: kubeadm_join_done
+
+    - name: get join token command from kmaster1
+      command: kubeadm token create --print-join-command
+      delegate_to: kmaster1
+      register: join_cmd
+      when: not kubeadm_join_done.stat.exists
+      changed_when: false
+
+    # upload-certs regenerates a fresh certificate-key (valid 2 h).
+    # stdout_lines[-1] is the hex key printed on the last line.
+    - name: re-upload certs on kmaster1 to get a fresh certificate key
+      command: kubeadm init phase upload-certs --upload-certs
+      delegate_to: kmaster1
+      register: upload_certs_out
+      when: not kubeadm_join_done.stat.exists
+      changed_when: false
+
+    - name: join as additional control-plane node
+      command: >
+        {{ join_cmd.stdout }}
+        --control-plane
+        --certificate-key {{ upload_certs_out.stdout_lines[-1] }}
+      when: not kubeadm_join_done.stat.exists
+
+    - name: set up kubeconfig for root
+      shell: |
+        mkdir -p /root/.kube
+        cp /etc/kubernetes/admin.conf /root/.kube/config
+        chown root:root /root/.kube/config
+      args:
+        creates: /root/.kube/config

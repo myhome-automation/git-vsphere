@@ -1,0 +1,85 @@
+---
+# bootstrap-users.yml
+#
+# Run once across all hosts (cluster + vault-server) to:
+#   1. Create the `bstha` user with the same SSH key + passwordless sudo
+#      already in use locally.
+#   2. Remove the GNOME/X stack and switch the default target to multi-user.
+#      Saves ~1-2 GB RAM and 1-2 GB disk per host — critical because this
+#      ESXi host hit its memory ceiling at 9 cluster VMs (see project memory).
+#
+# Idempotent. Re-running is safe.
+- name: bootstrap | bstha user + GUI removal on all hosts
+  hosts: everyone
+  become: true
+  gather_facts: true
+
+  vars:
+    bstha_pubkey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKyWHqjrytfwPj35K7gaJwIZjr8mLahy7G9DoWIXXklY bidur.devsecops@gmail.com"
+
+  tasks:
+    # ── User: bstha with wheel + NOPASSWD sudo ─────────────────────────────
+    - name: ensure bstha user exists
+      user:
+        name: bstha
+        groups: wheel
+        append: true
+        shell: /bin/bash
+        create_home: true
+        state: present
+
+    - name: grant bstha passwordless sudo
+      copy:
+        dest: /etc/sudoers.d/bstha
+        owner: root
+        group: root
+        mode: '0440'
+        content: |
+          bstha ALL=(ALL) NOPASSWD:ALL
+
+    - name: install bstha SSH authorized_key
+      authorized_key:
+        user: bstha
+        state: present
+        key: "{{ bstha_pubkey }}"
+
+    # ── GUI removal — saves memory + disk ───────────────────────────────────
+    - name: detect default systemd target
+      command: systemctl get-default
+      register: default_target
+      changed_when: false
+
+    - name: switch default target to multi-user.target (text)
+      command: systemctl set-default multi-user.target
+      when: default_target.stdout != "multi-user.target"
+      register: set_default
+
+    - name: remove "Server with GUI" group
+      dnf:
+        name: "@^Server with GUI"
+        state: absent
+        autoremove: true
+      register: gui_removal
+      # the group may not exist on already-headless hosts — don't fail
+      failed_when: false
+
+    - name: remove leftover GNOME / X.org packages
+      dnf:
+        name:
+          - "gnome-*"
+          - "gdm"
+          - "xorg-x11-*"
+          - "PackageKit-gtk3-module"
+          - "@graphical-server-environment"
+          - "@workstation-product-environment"
+        state: absent
+        autoremove: true
+      failed_when: false
+
+    - name: dnf autoremove orphaned deps
+      dnf:
+        autoremove: true
+
+    - name: switch live to multi-user.target now (drops X if running)
+      command: systemctl isolate multi-user.target
+      when: default_target.stdout != "multi-user.target"

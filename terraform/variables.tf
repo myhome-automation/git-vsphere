@@ -9,8 +9,9 @@ variable "esxi_password" {
 }
 
 variable "template_name" {
-  type    = string
-  default = "rocky9-template"
+  type        = string
+  default     = "vault-server"
+  description = "Source VM to clone for the cluster. We use the existing vault-server (Rocky 9.7) as the template; josenk/esxi snapshots it briefly so vault-server stays online during clone. The ansible user + key + ipv6-disable have already been baked into vault-server, so clones inherit them."
 }
 
 variable "role_config" {

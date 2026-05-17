@@ -13,21 +13,24 @@
         name: cloud-utils-growpart
         state: present
 
-    - name: extend LVM PV partition (sda3)
-      command: growpart /dev/sda 3
+    # ks.cfg layout: sda1=/boot, sda2=LVM PV (vg_system).
+    # Terraform clones the 20 GB template to a larger disk; grow the PV
+    # partition (sda2) and the root LV to reclaim the extra space.
+    - name: extend LVM PV partition (sda2)
+      command: growpart /dev/sda 2
       register: growpart_out
       # growpart exits 1 when nothing to do — treat as ok
       failed_when: growpart_out.rc not in [0, 1]
       changed_when: "'CHANGED' in growpart_out.stdout"
 
     - name: resize LVM physical volume
-      command: pvresize /dev/sda3
+      command: pvresize /dev/sda2
       changed_when: true
 
-    - name: extend lv_var with all free space
+    - name: extend lv_root with all free space
       community.general.lvol:
         vg: vg_system
-        lv: lv_var
+        lv: lv_root
         size: +100%FREE
         resizefs: true
 
@@ -81,6 +84,27 @@
         state: latest
       tags: update
 
+    # ── Disable IPv6 ────────────────────────────────────────────────────────
+    # Cluster operates IPv4-only. Disable at runtime (sysctl) AND at boot
+    # (grub kernel cmdline) so it stays off across reboots and so dhclient
+    # / NetworkManager don't try to acquire a v6 lease.
+    - name: persist ipv6 disable via sysctl
+      copy:
+        dest: /etc/sysctl.d/99-disable-ipv6.conf
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          net.ipv6.conf.all.disable_ipv6 = 1
+          net.ipv6.conf.default.disable_ipv6 = 1
+          net.ipv6.conf.lo.disable_ipv6 = 1
+      notify: reload sysctl
+
+    - name: disable ipv6 on kernel cmdline (grub)
+      command: grubby --update-kernel=ALL --args="ipv6.disable=1"
+      register: grubby_out
+      changed_when: '"ipv6.disable=1" not in grubby_out.stdout'
+
     # ── Firewall: ensure firewalld is running ────────────────────────────────
     - name: enable and start firewalld
       systemd:
@@ -105,3 +129,6 @@
       systemd:
         name: sshd
         state: restarted
+
+    - name: reload sysctl
+      command: sysctl --system

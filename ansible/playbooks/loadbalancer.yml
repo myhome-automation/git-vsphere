@@ -42,10 +42,9 @@
           backend k8s_masters
             balance roundrobin
             option tcp-check
-            # Replace IPs with actual kmaster IPs after terraform apply
-            server kmaster1 192.168.1.x:{{ k8s_api_port }} check
-            server kmaster2 192.168.1.x:{{ k8s_api_port }} check
-            server kmaster3 192.168.1.x:{{ k8s_api_port }} check
+            server kmaster1 {{ hostvars['kmaster1'].ansible_host }}:{{ k8s_api_port }} check
+            server kmaster2 {{ hostvars['kmaster2'].ansible_host }}:{{ k8s_api_port }} check
+            server kmaster3 {{ hostvars['kmaster3'].ansible_host }}:{{ k8s_api_port }} check
 
           # ── HTTP ingress ────────────────────────────────────────────────
           frontend http_in
@@ -54,9 +53,9 @@
 
           backend workers_http
             balance roundrobin
-            server kworker1 192.168.1.x:30080 check
-            server kworker2 192.168.1.x:30080 check
-            server kworker3 192.168.1.x:30080 check
+            server kworker1 {{ hostvars['kworker1'].ansible_host }}:30080 check
+            server kworker2 {{ hostvars['kworker2'].ansible_host }}:30080 check
+            server kworker3 {{ hostvars['kworker3'].ansible_host }}:30080 check
 
           # ── HTTPS ingress ───────────────────────────────────────────────
           frontend https_in
@@ -65,9 +64,9 @@
 
           backend workers_https
             balance roundrobin
-            server kworker1 192.168.1.x:30443 check
-            server kworker2 192.168.1.x:30443 check
-            server kworker3 192.168.1.x:30443 check
+            server kworker1 {{ hostvars['kworker1'].ansible_host }}:30443 check
+            server kworker2 {{ hostvars['kworker2'].ansible_host }}:30443 check
+            server kworker3 {{ hostvars['kworker3'].ansible_host }}:30443 check
 
           # ── HAProxy stats ───────────────────────────────────────────────
           frontend stats

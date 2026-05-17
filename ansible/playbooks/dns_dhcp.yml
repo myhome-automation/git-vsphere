@@ -43,17 +43,9 @@
         path: /etc/hosts
         marker: "# {mark} k8s cluster"
         block: |
-          # Masters
-          # kmaster1   192.168.1.x
-          # kmaster2   192.168.1.x
-          # kmaster3   192.168.1.x
-          # Workers
-          # kworker1   192.168.1.x
-          # kworker2   192.168.1.x
-          # kworker3   192.168.1.x
-          # Load balancers
-          # lb1        192.168.1.x
-          # lb2        192.168.1.x
+          {% for h in (groups['k8s_masters'] + groups['k8s_workers'] + groups['loadbalancers'] + groups['dns_dhcp']) | sort %}
+          {{ hostvars[h].ansible_host }}  {{ h }}.{{ domain }}  {{ h }}
+          {% endfor %}
 
     - name: open DNS firewall port
       firewalld:

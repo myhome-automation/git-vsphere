@@ -1,27 +1,17 @@
 locals {
-  # ── datastore1 (VMFS-6, 1.4 TB) — control plane + infrastructure ──────────
-  # Hosts the template, masters, load balancers, and DNS/DHCP.
-  # Kept separate so the cluster brain is on one storage unit.
-  #
-  # ── apps (VMFS-5, 931 GB) — data plane ────────────────────────────────────
-  # Workers only — the nodes that actually run workloads.
-  # Large capacity for container images and persistent volumes.
-
   vms = {
-    # control plane — datastore1
+    # control plane + infra — datastore1 (WD 500 GB)
     kmaster1 = { role = "k8s_master",   datastore = "datastore1" }
     kmaster2 = { role = "k8s_master",   datastore = "datastore1" }
     kmaster3 = { role = "k8s_master",   datastore = "datastore1" }
-
-    # data plane — apps
-    kworker1 = { role = "k8s_worker",   datastore = "apps" }
-    kworker2 = { role = "k8s_worker",   datastore = "apps" }
-    kworker3 = { role = "k8s_worker",   datastore = "apps" }
-
-    # infrastructure services — datastore1 (manage the cluster, not workloads)
     dns1     = { role = "dns_dhcp",     datastore = "datastore1" }
     lb1      = { role = "loadbalancer", datastore = "datastore1" }
     lb2      = { role = "loadbalancer", datastore = "datastore1" }
+
+    # workers — datastore2 (Hitachi 1 TB)
+    kworker1 = { role = "k8s_worker",   datastore = "datastore2" }
+    kworker2 = { role = "k8s_worker",   datastore = "datastore2" }
+    kworker3 = { role = "k8s_worker",   datastore = "datastore2" }
   }
 }
 
