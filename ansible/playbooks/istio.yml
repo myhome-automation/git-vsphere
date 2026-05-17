@@ -58,8 +58,9 @@
       changed_when: false
       failed_when: false
 
+    # Use full path — /usr/local/bin may not be in ansible's command PATH
     - name: install Istio control plane (istioctl install)
-      command: istioctl install --set profile={{ istio_profile }} -y
+      command: "{{ istio_install_dir }}/istio-{{ istio_version }}/bin/istioctl install --set profile={{ istio_profile }} -y"
       register: istio_install
       when: istio_ns.rc != 0
       changed_when: istio_install.rc == 0

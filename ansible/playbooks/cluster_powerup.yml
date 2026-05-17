@@ -1,0 +1,84 @@
+---
+# cluster_powerup.yml
+#
+# Power on every cluster VM (and vault-server) via ESXi vim-cmd.
+# Runs locally on the ansible controller (ssh to ESXi), since the
+# target VMs are off and unreachable from ansible directly.
+#
+# Order matches the inverse of cluster_shutdown.yml:
+#   1. vault-server first (DNS + Vault back online)
+#   2. dns + loadbalancer (DNS for cluster bootstrap)
+#   3. masters (control plane comes up)
+#   4. workers
+#
+# Usage:
+#   ansible-playbook playbooks/cluster_powerup.yml
+- name: powerup | start all VMs via ESXi vim-cmd
+  hosts: localhost
+  gather_facts: false
+  vars:
+    esxi_host: 192.168.1.174
+    # vmid resolution is name-based via vim-cmd; this list is the order.
+    vm_order:
+      - vault-server
+      - dns1
+      - lb1
+      - kmaster1
+      - kmaster2
+      - kmaster3
+      - kworker1
+      - kworker2
+      - kworker3
+
+  tasks:
+    - name: get vmid for each VM from ESXi
+      shell: |
+        ssh -o StrictHostKeyChecking=no root@{{ esxi_host }} \
+          "vim-cmd vmsvc/getallvms | awk -v n='{{ item }}' '\$2==n {print \$1}'"
+      register: vmids
+      changed_when: false
+      loop: "{{ vm_order }}"
+
+    - name: power on each VM (skip if already on)
+      shell: |
+        ssh -o StrictHostKeyChecking=no root@{{ esxi_host }} \
+          "state=\$(vim-cmd vmsvc/power.getstate {{ item.stdout }} | tail -1); \
+           if [ \"\$state\" != 'Powered on' ]; then \
+             vim-cmd vmsvc/power.on {{ item.stdout }}; \
+             echo started; \
+           else \
+             echo already_on; \
+           fi"
+      register: poweron_result
+      changed_when: "'started' in poweron_result.stdout"
+      loop: "{{ vmids.results }}"
+      loop_control:
+        label: "{{ item.item }} (vmid {{ item.stdout }})"
+      # Brief delay between each so dependencies (DNS → cluster) settle.
+      throttle: 1
+      poll: 0
+      async: 0
+
+    - name: wait for SSH on all cluster VMs (max 5 min)
+      wait_for:
+        host: "{{ item }}"
+        port: 22
+        timeout: 300
+      loop:
+        - 192.168.1.202   # vault-server
+        - 192.168.1.185   # dns1
+        - 192.168.1.188   # lb1
+        - 192.168.1.186   # kmaster1
+        - 192.168.1.189   # kmaster2
+        - 192.168.1.187   # kmaster3
+        - 192.168.1.182   # kworker1
+        - 192.168.1.183   # kworker2
+        - 192.168.1.184   # kworker3
+
+    - debug:
+        msg: |
+          All VMs powered on and reachable via SSH.
+          Cluster API should be available at https://192.168.1.50:6443 within ~1 min
+          (kubelet + control plane pods need to settle).
+          Verify: ssh -i /apps/git-code/keys/ansible-key ansible@192.168.1.186 \
+                    'sudo KUBECONFIG=/root/.kube/config kubectl get nodes'

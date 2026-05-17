@@ -1,0 +1,59 @@
+---
+# k8s_reset.yml
+#
+# kubeadm reset on all cluster nodes + clean stray state. Use when:
+#   - changing pod CIDR (must match Calico IPPool exactly per Tigera operator)
+#   - control plane is wedged
+#   - starting over cleanly
+#
+# Run: ansible-playbook playbooks/k8s_reset.yml
+# Then re-run site.yml --tags k8s,calico,istio to rebuild.
+- name: k8s_reset | tear down kubeadm state on every node
+  hosts: k8s_masters:k8s_workers
+  become: true
+  tasks:
+    - name: kubeadm reset (idempotent)
+      command: kubeadm reset --force --cleanup-tmp-dir
+      register: kr
+      failed_when: kr.rc != 0 and 'unknown command' not in kr.stderr
+      changed_when: true
+
+    - name: remove etcd data
+      file:
+        path: /var/lib/etcd
+        state: absent
+
+    - name: remove CNI conf + state
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/cni/net.d
+        - /var/lib/cni
+        - /var/run/calico
+        - /etc/calico
+        - /opt/cni/bin/calico
+        - /opt/cni/bin/calico-ipam
+
+    - name: flush stray iptables rules from kube-proxy / cni
+      shell: |
+        iptables -F
+        iptables -t nat -F
+        iptables -t mangle -F
+        iptables -X
+        ipvsadm -C 2>/dev/null || true
+      changed_when: true
+
+    - name: remove kubelet config
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/kubernetes
+        - /var/lib/kubelet
+        - /root/.kube
+
+    - name: restart containerd to clear any state
+      systemd:
+        name: containerd
+        state: restarted

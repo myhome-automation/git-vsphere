@@ -19,7 +19,7 @@ http_port:    80
 https_port:   443
 k8s_api_port: 6443
 k8s_version:  "1.36"
-pod_network_cidr: "10.244.0.0/16"
+pod_network_cidr: "10.0.0.0/16"   # avoid home network 192.168.1.0/24; Calico IPPool matches
 
 # Thin wrappers — reference vault vars so playbooks use plain names
 keepalived_password: "{{ vault_keepalived_password }}"

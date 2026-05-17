@@ -13,6 +13,7 @@ you're debugging.
 | [ansible.md](ansible.md) | `group_vars/` location, vault password, inventory groups, busybox vs bash on ESXi |
 | [esxi-host.md](esxi-host.md) | ESXi 6.7 quirks: scp/sftp bugs, /tmp ramdisk, MAC OUI rules, memory ceiling |
 | [packer.md](packer.md) | Packer Rocky 9 template attempts (abandoned approach) — kickstart delivery, ISO checksum, anaconda TUI |
+| [operations.md](operations.md) | Day-to-day ops: shutdown / power on, reset cluster, change pod CIDR |
 
 ## Current architecture
 

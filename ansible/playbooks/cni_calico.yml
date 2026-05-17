@@ -14,7 +14,10 @@
   become: true
   vars:
     calico_version: v3.30.4
-    pod_cidr: 10.244.0.0/16    # must match kubeadm --pod-network-cidr
+    # Pod CIDR chosen to NOT collide with home LAN (192.168.1.0/24).
+    # Calico runs its own IPAM, so this doesn't have to match the
+    # kubeadm --pod-network-cidr used at init time.
+    pod_cidr: 10.0.0.0/16
   environment:
     KUBECONFIG: /root/.kube/config
 
@@ -34,6 +37,22 @@
       register: tigera_install
       changed_when: tigera_install.rc == 0
       failed_when: tigera_install.rc != 0 and 'AlreadyExists' not in tigera_install.stderr
+
+    # Tigera operator pod takes ~10-30 s to register the operator.tigera.io
+    # CRDs. Applying Installation CR before then fails with
+    # "no matches for kind Installation in version operator.tigera.io/v1".
+    - name: wait for tigera-operator deployment to be available
+      command: kubectl -n tigera-operator wait --for=condition=available --timeout=180s deployment/tigera-operator
+      register: tigera_op_ready
+      changed_when: false
+
+    - name: wait for operator CRDs to register
+      command: kubectl get crd installations.operator.tigera.io
+      register: crd_check
+      retries: 30
+      delay: 5
+      until: crd_check.rc == 0
+      changed_when: false
 
     - name: write Calico Installation CR (uses our pod CIDR)
       copy:

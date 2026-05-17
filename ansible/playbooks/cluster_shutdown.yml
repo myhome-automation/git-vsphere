@@ -1,0 +1,67 @@
+---
+# cluster_shutdown.yml
+#
+# Gracefully shut down every host that's in our inventory's `everyone`
+# group — all 8 cluster clones AND vault-server.
+#
+# Order:
+#   1. workers (drain stops new pods being scheduled; not strictly needed
+#      since we're powering off everything)
+#   2. dns + lb
+#   3. masters
+#   4. vault-server last
+#
+# Usage:
+#   ansible-playbook playbooks/cluster_shutdown.yml
+#
+# To power the cluster back on, use cluster_powerup.yml (runs locally
+# against ESXi vim-cmd).
+- name: shutdown | workers first
+  hosts: k8s_workers
+  become: true
+  gather_facts: false
+  tasks:
+    - name: schedule 30s shutdown
+      shell: nohup sh -c 'sleep 5 && /sbin/shutdown -h now' >/dev/null 2>&1 &
+      async: 1
+      poll: 0
+
+- name: shutdown | dns + loadbalancer
+  hosts: dns_dhcp:loadbalancers
+  become: true
+  gather_facts: false
+  tasks:
+    - name: schedule shutdown
+      shell: nohup sh -c 'sleep 10 && /sbin/shutdown -h now' >/dev/null 2>&1 &
+      async: 1
+      poll: 0
+
+- name: shutdown | masters
+  hosts: k8s_masters
+  become: true
+  gather_facts: false
+  tasks:
+    - name: schedule shutdown
+      shell: nohup sh -c 'sleep 15 && /sbin/shutdown -h now' >/dev/null 2>&1 &
+      async: 1
+      poll: 0
+
+- name: shutdown | vault-server last
+  hosts: vault
+  become: true
+  gather_facts: false
+  tasks:
+    - name: schedule shutdown
+      shell: nohup sh -c 'sleep 20 && /sbin/shutdown -h now' >/dev/null 2>&1 &
+      async: 1
+      poll: 0
+
+- name: shutdown | report
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - debug:
+        msg: |
+          Shutdown commands dispatched. VMs will be off in ~30 seconds.
+          To verify: ssh root@192.168.1.174 'vim-cmd vmsvc/getallvms | xargs ...'
+          To bring them back: ansible-playbook playbooks/cluster_powerup.yml
