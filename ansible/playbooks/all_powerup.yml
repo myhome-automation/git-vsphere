@@ -44,3 +44,53 @@
 
 # Now bring up the cluster.
 - import_playbook: cluster_powerup.yml
+
+# ── Post-powerup hygiene ─────────────────────────────────────────────────
+# Force chronyd to step the clock immediately. VMware Tools sets the VM
+# clock from the ESXi host on boot; if the ESXi host clock has drifted,
+# the VMs come up with the same drift and chrony's normal slew is too
+# slow to recover (the safety threshold is 1000s). Step explicitly.
+# Symptom this prevents: Prometheus rejects remote_write samples as
+# "out of order", `up{}` queries return empty even though scrape works.
+- name: powerup | sync clocks via chronyc makestep
+  hosts: everyone
+  become: true
+  gather_facts: false
+  tasks:
+    - name: chronyc makestep (force immediate clock step)
+      command: chronyc makestep
+      register: makestep
+      changed_when: "'200 OK' in makestep.stdout"
+      failed_when: false
+
+# ── Health summary ───────────────────────────────────────────────────────
+- name: powerup | report cluster health
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: probe k8s API via VIP
+      uri:
+        url: "https://192.168.1.50:6443/healthz"
+        validate_certs: false
+        timeout: 10
+      register: api_health
+      retries: 12
+      delay: 5
+      until: api_health.status == 200
+      failed_when: false
+
+    - name: probe DNS via VIP
+      shell: dig @192.168.1.50 kmaster1.myhomelab.com +short +time=3 +tries=1
+      register: dns_probe
+      changed_when: false
+      failed_when: false
+
+    - debug:
+        msg: |
+          ====== Cluster reachability ======
+          k8s API @ https://192.168.1.50:6443/healthz : {{ 'OK' if api_health.status == 200 else 'FAIL (' ~ (api_health.status | default('no response')) ~ ')' }}
+          DNS  @ 192.168.1.50  kmaster1.myhomelab.com  : {{ dns_probe.stdout | default('no answer') }}
+
+          Next step: ensure Calico BGP is established before scheduling new pods.
+            kubectl --context homelab -n calico-system get pods
+          If calico-node pods show 0/1, see docs/calico.md C1 (firewalld).
