@@ -56,19 +56,16 @@ curl -sI https://pkgs.k8s.io/core:/stable:/v1.36/rpm/repodata/repomd.xml
 
 ---
 
-## I3. Single-LB API endpoint (no peer)
+## I3. HA LB pair fronts the API VIP
 
-With `lb2` dropped (memory ceiling), `lb1` runs keepalived as MASTER alone
-— it owns the VIP `192.168.1.50` at all times but there's no failover.
-HAProxy on lb1 fronts the k8s API on port 6443 → backends kmaster1/2/3.
+`lb1` (MASTER, prio 101) and `lb2` (BACKUP, prio 100) own
+`192.168.1.50` via keepalived; HAProxy on both fronts the k8s API on
+6443 → kmaster1/2/3. kubeadm init was run with
+`--control-plane-endpoint=192.168.1.50:6443` so etcd quorum,
+kube-apiserver TLS SANs, and worker join all go through the VIP.
 
-kubeadm init uses `--control-plane-endpoint=192.168.1.50:6443` so etcd
-quorum, kube-apiserver TLS SANs, and worker join all go through the VIP.
-If lb1 goes down, the cluster API is unavailable until lb1 comes back.
-
-**To survive lb1 outage**: add lb2 back (need to free 2 GB on host first;
-see [esxi-host.md](esxi-host.md)) and revert loadbalancer.yml to the
-MASTER/BACKUP keepalived config (look in git history).
+If lb1 dies, VRRP fails the VIP over to lb2 in ~3 s and the API stays
+reachable. See [haproxy.md](haproxy.md) H2 for the failover test.
 
 ---
 

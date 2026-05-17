@@ -6,7 +6,7 @@
 #
 # Order:
 #   1. workers (drain not needed since we're powering off)
-#   2. dns + lb
+#   2. lb pair (DNS + HAProxy + keepalived)
 #   3. masters
 #
 # To ALSO shut down vault-server, run `all_shutdown.yml` instead.
@@ -26,8 +26,8 @@
       async: 1
       poll: 0
 
-- name: shutdown | dns + loadbalancer
-  hosts: dns_dhcp:loadbalancers
+- name: shutdown | loadbalancer pair (HAProxy + dnsmasq + keepalived)
+  hosts: loadbalancers
   become: true
   gather_facts: false
   tasks:

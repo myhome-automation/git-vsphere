@@ -1,10 +1,13 @@
-# Internal DNS (`myhomelab.com`) on lb1 — issues & fixes
+# Internal DNS (`myhomelab.com`) on the LB pair — issues & fixes
 
-Internal DNS is served by **dnsmasq on lb1** (192.168.1.188). Authoritative
-for `myhomelab.com`; forwards everything else to 8.8.8.8 / 8.8.4.4.
+Internal DNS is served by **dnsmasq on both lb1 (192.168.1.188) and lb2
+(192.168.1.185)** as an HA pair. Authoritative for `myhomelab.com`;
+forwards everything else to 8.8.8.8 / 8.8.4.4. All clients query the
+keepalived VIP `192.168.1.50` — only the current VIP holder answers.
 
-Configured by `ansible/playbooks/dns.yml`. Previously `dns_dhcp.yml` ran
-on dns1 — that role has been retired; dns1 VM is unused (deletion candidate).
+Configured by `ansible/playbooks/dns.yml`. The legacy `dns_dhcp.yml`
+(retired 2026-05-17 when the old dns1 VM was re-purposed as lb2) has
+been deleted.
 
 ---
 
@@ -40,7 +43,23 @@ addn-hosts=/etc/dnsmasq.hosts.d/myhomelab.hosts
 
 ---
 
-## D2. Reverse lookups (PTR records) — auto-generated
+## D2. `cannot set --bind-interfaces and --bind-dynamic`
+
+**Symptom:** after switching to the HA pair setup, dnsmasq refuses to
+start with this error.
+
+**Root cause:** Rocky 9's `/etc/dnsmasq.conf` (the package default) has
+`bind-interfaces` uncommented. Our `/etc/dnsmasq.d/myhomelab.conf` sets
+`bind-dynamic` (required for VIP failover). The two options are
+mutually exclusive.
+
+**Fix:** comment out `bind-interfaces` in the package default — the
+play does this with a `lineinfile` task that regex-matches
+`^bind-interfaces` and replaces with `#bind-interfaces`.
+
+---
+
+## D3. Reverse lookups (PTR records) — auto-generated
 
 dnsmasq automatically creates PTR records for every A record it learns
 (from `/etc/hosts`, `addn-hosts`, etc.). The combination of:
@@ -50,9 +69,9 @@ dnsmasq automatically creates PTR records for every A record it learns
 
 gives you both forward and reverse for free:
 ```
-$ dig @192.168.1.188 kmaster1.myhomelab.com +short
+$ dig @192.168.1.50 kmaster1.myhomelab.com +short
 192.168.1.186
-$ dig @192.168.1.188 -x 192.168.1.186 +short
+$ dig @192.168.1.50 -x 192.168.1.186 +short
 kmaster1.myhomelab.com.
 ```
 
@@ -60,61 +79,63 @@ No separate reverse-zone file needed.
 
 ---
 
-## D3. Making every host use lb1 as primary resolver
+## D4. Making every host query the VIP (HA-friendly resolver)
 
-NetworkManager owns `/etc/resolv.conf` on Rocky 9. `dns.yml` runs a play
-on `everyone` (cluster + vault) that:
+`dns.yml` runs a final play on `everyone` (cluster + vault) that sets
+NetworkManager's per-connection `ipv4.dns` to `<VIP> <lb1-IP> <lb2-IP>`
+in that order:
 
-```yaml
-- name: get primary NM connection name
-  shell: >
-    nmcli -t -f NAME,DEVICE connection show --active |
-    awk -F: -v iface="{{ ansible_default_ipv4.interface }}" '$2==iface {print $1; exit}'
-  register: nm_conn
-
-- command: >
-    nmcli connection modify "{{ nm_conn.stdout }}"
-    ipv4.dns "192.168.1.188 8.8.8.8"
-    ipv4.dns-search myhomelab.com
-    ipv4.ignore-auto-dns yes
-
-- command: nmcli connection up "{{ nm_conn.stdout }}"
+```
+search myhomelab.com
+nameserver 192.168.1.50      # keepalived VIP — answered by whichever LB owns it
+nameserver 192.168.1.188     # lb1 direct (fallback during VIP transit)
+nameserver 192.168.1.185     # lb2 direct (fallback)
 ```
 
 `ipv4.ignore-auto-dns yes` is critical — without it, DHCP-provided DNS
 from the home router would clobber our manually-set DNS at every
 NetworkManager refresh.
 
-`ipv4.dns-search myhomelab.com` means short names work:
+Why the direct IPs are listed as fallbacks: there's a ~3 s window
+during VRRP failover where neither LB owns the VIP (old MASTER lost
+priority, new MASTER hasn't yet performed gratuitous ARP). Listing both
+direct IPs lets glibc's resolver fall through to them.
+
+---
+
+## D5. HA dnsmasq with `bind-dynamic` + VIP
+
+Each LB's `/etc/dnsmasq.d/myhomelab.conf` declares:
 ```
-$ ping kmaster1
-PING kmaster1.myhomelab.com (192.168.1.186)
+listen-address=127.0.0.1,<this-LB's-primary-IP>,192.168.1.50
+bind-dynamic
+```
+
+With `bind-dynamic`, dnsmasq listens only on the listed addresses that
+**currently exist** on the host's interfaces:
+- lb1 has VIP → dnsmasq there binds 127.0.0.1, 192.168.1.188, 192.168.1.50
+- lb2 doesn't have VIP → dnsmasq there binds 127.0.0.1, 192.168.1.185 only
+
+When keepalived moves the VIP to lb2, dnsmasq on lb2 dynamically picks
+up the new address and starts answering on it. The total failover
+window (VRRP detection + ARP + dnsmasq rebind) is ~3-4 seconds.
+
+**Test it:**
+```bash
+# Verify VIP is on lb1
+ssh ansible@lb1 'ip -4 addr show ens192 | grep 192.168.1.50'
+# Force failover
+ssh ansible@lb1 'sudo systemctl stop keepalived'
+# VIP should appear on lb2 within ~3s and DNS via VIP should still answer
+sleep 4
+dig @192.168.1.50 kmaster1.myhomelab.com +short
+# Restore
+ssh ansible@lb1 'sudo systemctl start keepalived'
 ```
 
 ---
 
-## D4. dnsmasq listens only on lb1's primary IP + loopback
-
-Config has:
-```
-listen-address=127.0.0.1,192.168.1.188
-bind-interfaces
-```
-
-So dnsmasq won't bind to other addresses (e.g., the VIP 192.168.1.50,
-which keepalived owns). This means:
-- Direct queries to `192.168.1.188:53` work ✓
-- Direct queries to `192.168.1.50:53` (the VIP) do NOT — VIP is owned
-  by keepalived but no service listens on it
-- All cluster hosts use `192.168.1.188` directly (correct)
-
-If you ever want DNS reachable via the VIP too, add the VIP to
-`listen-address=` and ensure dnsmasq starts AFTER keepalived (the VIP must
-exist as a routable address before bind).
-
----
-
-## D5. Firewalld
+## D6. Firewalld
 
 The play opens 53/tcp + 53/udp:
 ```yaml
@@ -133,25 +154,28 @@ records) and zone transfers (not used here but standard).
 
 ---
 
-## D6. Quick troubleshooting
+## D7. Quick troubleshooting
 
 From any cluster host:
 ```bash
 # resolver config
-cat /etc/resolv.conf                       # should show 192.168.1.188 first
+cat /etc/resolv.conf                       # should show 192.168.1.50 first
 nmcli connection show <conn>  | grep dns   # NM-stored config
 
 # probe
 dig +short kmaster2.myhomelab.com
 dig +short -x 192.168.1.189
 
-# direct probe (bypassing /etc/resolv.conf)
-dig @192.168.1.188 vault.myhomelab.com
+# direct probe (bypassing /etc/resolv.conf, picks specific LB)
+dig @192.168.1.50  vault.myhomelab.com     # via VIP (active LB)
+dig @192.168.1.188 vault.myhomelab.com     # direct to lb1
+dig @192.168.1.185 vault.myhomelab.com     # direct to lb2
 ```
 
-On lb1:
+On either LB:
 ```bash
-sudo systemctl status dnsmasq
+sudo systemctl status dnsmasq keepalived
 sudo tail -f /var/log/dnsmasq.log     # log-queries shows every lookup
-sudo ss -ulnp | grep :53              # confirm bound on the right IP
+sudo ss -ulnp | grep :53              # confirm bound on the right IPs (VIP only on MASTER)
+ip -4 addr show ens192 | grep 192.168.1.50   # is this LB the VIP holder right now?
 ```

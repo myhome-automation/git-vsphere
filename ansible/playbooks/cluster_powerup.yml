@@ -22,8 +22,8 @@
     # vmid resolution is name-based via vim-cmd; this list is the order.
     # vault-server intentionally absent — see all_powerup.yml if needed.
     vm_order:
-      - dns1
       - lb1
+      - lb2
       - kmaster1
       - kmaster2
       - kmaster3
@@ -66,8 +66,8 @@
         port: 22
         timeout: 300
       loop:
-        - 192.168.1.185   # dns1
         - 192.168.1.188   # lb1
+        - 192.168.1.185   # lb2
         - 192.168.1.186   # kmaster1
         - 192.168.1.189   # kmaster2
         - 192.168.1.187   # kmaster3

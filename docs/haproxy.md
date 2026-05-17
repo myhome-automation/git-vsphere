@@ -1,11 +1,14 @@
-# HAProxy on lb1 — issues & fixes
+# HAProxy + keepalived on the LB pair — issues & fixes
 
-`lb1` (192.168.1.188) runs HAProxy + keepalived. Fronts the k8s API
-(TCP 6443 → kmaster1/2/3) and ingress (HTTP 80, HTTPS 443 → kworker
-NodePorts). Stats on 8404.
+`lb1` (192.168.1.188) and `lb2` (192.168.1.185) run HAProxy + keepalived
++ dnsmasq as an HA pair. Both fronts the k8s API (TCP 6443 →
+kmaster1/2/3) and ingress (HTTP 80, HTTPS 443 → kworker NodePorts).
+Stats on 8404 on each. keepalived MASTER (lb1, prio 101) / BACKUP (lb2,
+prio 100) owns the VIP `192.168.1.50`.
 
-Single-LB mode: `lb2` was dropped due to ESXi memory ceiling
-(see [esxi-host.md](esxi-host.md)).
+> Historical note: lb2 was dropped early in the build due to memory
+> ceiling. The former dns1 VM (also at .185) was re-purposed as lb2 on
+> 2026-05-17 after the GUI strip freed ~10 GB cluster-wide.
 
 ---
 
@@ -46,30 +49,40 @@ After the boolean is set, `systemctl start haproxy` succeeds.
 
 ---
 
-## H2. Single-LB keepalived (no peer)
+## H2. MASTER/BACKUP keepalived pair
 
-The original `loadbalancer.yml` had a MASTER/BACKUP pair (lb1/lb2). With
-lb2 dropped, the play now writes a standalone MASTER config on lb1:
+Per-host state and priority come from inventory variables, so the same
+template generates both configs:
 
 ```
+# inventory/hosts.ini
+lb1 ansible_host=192.168.1.188 keepalived_state=MASTER keepalived_priority=101
+lb2 ansible_host=192.168.1.185 keepalived_state=BACKUP keepalived_priority=100
+
+# loadbalancer.yml template renders, on each host:
 vrrp_instance VI_1 {
-  state MASTER
+  state {{ keepalived_state }}
   interface {{ ansible_default_ipv4.interface }}
   virtual_router_id 51
-  priority 101
+  priority {{ keepalived_priority }}
   ...
-  virtual_ipaddress {
-    192.168.1.50      # vip
-  }
+  virtual_ipaddress { 192.168.1.50 }
 }
 ```
 
-keepalived runs happily as a lone MASTER — it just always owns the VIP
-with no failover. `journalctl -u keepalived` confirms `VRRP_Instance(VI_1)
-Transition to MASTER STATE`.
+Verify the active VIP holder:
+```bash
+ssh ansible@lb1 'ip -4 addr show ens192 | grep 192.168.1.50'   # MASTER prints the VIP line
+ssh ansible@lb2 'ip -4 addr show ens192 | grep 192.168.1.50'   # BACKUP prints nothing
+```
 
-If lb1 goes down, the VIP goes away and the cluster API endpoint becomes
-unreachable until lb1 returns.
+**Failover test** (recovery in ~3 s):
+```bash
+ssh ansible@lb1 'sudo systemctl stop keepalived'
+sleep 4
+ssh ansible@lb2 'ip -4 addr show ens192 | grep 192.168.1.50'   # VIP is here now
+curl -sk https://192.168.1.50:6443/healthz                     # still 'ok'
+ssh ansible@lb1 'sudo systemctl start keepalived'              # VIP returns to MASTER
 
 ---
 
@@ -115,8 +128,9 @@ The play opens `vrrp` protocol via firewalld:
 ```
 
 VRRP is protocol 112 (not TCP/UDP). Without this rule, keepalived's
-multicast advertisements get dropped — fine for single-LB (no peer to
-advertise to), but required if you ever re-add lb2.
+multicast advertisements get dropped — the MASTER and BACKUP can't see
+each other, both think they're MASTER, and you get a duplicate-VIP
+split-brain.
 
 ---
 

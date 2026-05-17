@@ -35,8 +35,8 @@ k8s cluster).
 | k8s worker | kworker1 | 192.168.1.182 | 2 | 8 GB | 100 GB | datastore2 |
 | k8s worker | kworker2 | 192.168.1.183 | 2 | 8 GB | 100 GB | datastore2 |
 | k8s worker | kworker3 | 192.168.1.184 | 2 | 8 GB | 100 GB | datastore2 |
-| DNS+DHCP (unused) | dns1 | 192.168.1.185 | 1 | 1 GB | 20 GB | datastore1 |
-| Loadbalancer + DNS | lb1 | 192.168.1.188 | 1 | 2 GB | 20 GB | datastore1 |
+| LB + DNS (MASTER) | lb1 | 192.168.1.188 | 1 | 2 GB | 20 GB | datastore1 |
+| LB + DNS (BACKUP) | lb2 | 192.168.1.185 | 1 | 1 GB | 20 GB | datastore1 |
 
 Total: ~43 GB RAM configured (out of 60 GB host).
 
@@ -57,24 +57,29 @@ VIPs / virtual addresses:
                        VM Network port group
                                │
        ┌───────────────────────┼─────────────────────────────┐
-       │                       │                             │
-   ┌───┴───┐  ┌────┐  ┌────┐  ┌────┐  ┌────┐  ┌────┐  ┌────┐
-   │vault- │  │dns1│  │ lb1│  │kma1│  │kma2│  │kma3│  │kwr*│
-   │server │  │.185│  │.188│  │.186│  │.189│  │.187│  │.18*│
-   │ .202  │  └────┘  └─┬──┘  └──┬─┘  └─┬──┘  └─┬──┘  └─┬──┘
-   └───────┘            │        │      │       │       │
-                        │        └──────┴───────┴───────┘
-                        │            ↑ k8s cluster
-                        │
-                        └─── VIP 192.168.1.50 (keepalived)
-                             ↑ HAProxy fronts: 6443 (api) 80 (http) 443 (https)
+       │              ┌────────┴────────┐                    │
+       │              │   keepalived    │                    │
+       │              │   VIP 192.168.1.50                   │
+       │              │   (lb1 MASTER ⇄ lb2 BACKUP, VRRP)    │
+       │              └────────┬────────┘                    │
+   ┌───┴───┐  ┌────┐  ┌────┐  ┌┴───┐  ┌────┐  ┌────┐  ┌────┐
+   │vault- │  │ lb1│  │ lb2│  │kma1│  │kma2│  │kma3│  │kwr*│
+   │server │  │.188│  │.185│  │.186│  │.189│  │.187│  │.18*│
+   │ .202  │  └─┬──┘  └─┬──┘  └──┬─┘  └─┬──┘  └─┬──┘  └─┬──┘
+   └───────┘    │       │        │      │       │       │
+                │       │        └──────┴───────┴───────┘
+                │       │             ↑ k8s cluster
+                │       │
+                │       └── HAProxy + dnsmasq (active when holds VIP)
+                └────────── HAProxy + dnsmasq (default holder of VIP)
+                            VIP fronts: 6443 (api) 80 (http) 443 (https) 53 (dns)
 ```
 
 DNS arrows:
 ```
-[ Every host ] --(192.168.1.188)--> [ lb1 dnsmasq ]
-                                       authoritative for myhomelab.com
-                                       forwards rest to 8.8.8.8 / 8.8.4.4
+[ Every host ] --(192.168.1.50  VIP)--> [ dnsmasq on VIP-holder (lb1 or lb2) ]
+                                          authoritative for myhomelab.com
+                                          forwards rest to 8.8.8.8 / 8.8.4.4
 ```
 
 ---
@@ -120,8 +125,8 @@ DNS arrows:
 | Container runtime | containerd 2.2.3 | CRI plugin re-enabled via `containerd config default` |
 | CNI | Calico via Tigera operator v3.30.4 | IPPool 10.0.0.0/16, VXLAN cross-subnet |
 | Service mesh | Istio 1.27.2 | `default` profile, sidecar injection on `default` ns |
-| DNS (internal) | CoreDNS (k8s-internal) + dnsmasq on lb1 | dnsmasq for `*.myhomelab.com` |
-| Load balancer | HAProxy + keepalived on lb1 | single-LB, VIP 192.168.1.50 |
+| DNS (internal) | CoreDNS (k8s-internal) + dnsmasq HA on lb1+lb2 | dnsmasq for `*.myhomelab.com`, answered by VIP holder |
+| Load balancer | HAProxy + keepalived HA on lb1+lb2 | MASTER lb1 / BACKUP lb2, VIP 192.168.1.50 |
 
 ### CIDRs
 
@@ -158,9 +163,9 @@ DNS arrows:
 [ ansible site.yml ]
    1. base.yml         → LVM extend, hostname, SSH lockdown,
                          common pkgs, ipv6 disable, firewalld, timezone
-   2. dns.yml          → dnsmasq on lb1 (myhomelab.com authoritative)
-                         every host nmcli → 192.168.1.188 as DNS
-   3. loadbalancer.yml → HAProxy + keepalived on lb1 (single-LB, VIP)
+   2. dns.yml          → dnsmasq HA on lb1+lb2 (myhomelab.com authoritative,
+                         bind-dynamic; every host nmcli → VIP .50 as DNS)
+   3. loadbalancer.yml → HAProxy + keepalived MASTER/BACKUP on lb1+lb2
    4. k8s_master.yml   → containerd, kubeadm init kmaster1, join 2/3
    5. k8s_worker.yml   → containerd, kubeadm join × 3
    6. cni_calico.yml   → Tigera operator, replace Flannel with Calico
@@ -172,12 +177,10 @@ DNS arrows:
 ## What's NOT in this cluster (yet)
 
 - splunk-monitoring VM (deferred — memory available now after GUI strip)
-- ingress controller (nginx-ingress or istio-ingressgateway exposed)
+- ingress controller (nginx-ingress or istio-ingressgateway exposed externally)
 - persistent storage (no SC, no PV provisioner)
 - backup / etcd snapshot strategy
-- second loadbalancer (`lb2` was dropped — memory ceiling)
 - vSphere vCenter (single ESXi host only)
-- dns1 (deleted candidate — DNS moved to lb1)
 
 ---
 
@@ -191,8 +194,10 @@ ESXi host 192.168.1.174
 │   │              └── LVs: root / var / apps / home (extended by base.yml)
 │   ├── kmaster2/  scsi0:0 → 50 GB thin (sda) → VG 'rlm' (same layout)
 │   ├── kmaster3/  scsi0:0 → 50 GB thin (sda) → VG 'rlm' (same layout)
-│   ├── dns1/      scsi0:0 → 20 GB thin (sda) → VG 'rlm'
-│   └── lb1/       scsi0:0 → 20 GB thin (sda) → VG 'rlm'
+│   ├── lb1/       scsi0:0 → 20 GB thin (sda) → VG 'rlm'
+│   └── dns1/      scsi0:0 → 20 GB thin (sda) → VG 'rlm'  (VM is now 'lb2' —
+│                                                          dir/VMX names kept as 'dns1'
+│                                                          for historical reasons)
 │
 └── datastore2 (VMFS-6, 931 GB — workers + clone source)
     ├── vault-server/  scsi0:0 → 30 GB (sda) — THE clone source (vmkfstools -i)
@@ -346,10 +351,10 @@ requires pod CIDR traffic to bypass firewalld entirely, hence the
 | 179/tcp | inbound | k8s_masters, k8s_workers | Calico BGP |
 | 5473/tcp | inbound | k8s_masters, k8s_workers | Calico Typha |
 | 4789/udp | inbound | k8s_masters, k8s_workers | Calico VXLAN (cross-subnet) |
-| 80/tcp, 443/tcp | inbound | lb1 | HAProxy HTTP/HTTPS ingress |
-| 8404/tcp | inbound | lb1 | HAProxy stats |
-| VRRP (proto 112) | inbound | lb1 | keepalived (standalone — no peer) |
-| 53/udp+tcp | inbound | lb1 | dnsmasq (`myhomelab.com`) |
+| 80/tcp, 443/tcp | inbound | lb1, lb2 | HAProxy HTTP/HTTPS ingress |
+| 8404/tcp | inbound | lb1, lb2 | HAProxy stats |
+| VRRP (proto 112) | inbound | lb1, lb2 | keepalived MASTER/BACKUP advertisements |
+| 53/udp+tcp | inbound | lb1, lb2 | dnsmasq (`myhomelab.com`), answered by VIP holder |
 | **pod CIDR 10.0.0.0/16** | **any** | **k8s_masters, k8s_workers (zone trusted)** | **Pod-to-pod across nodes** |
 
 ---
@@ -365,10 +370,10 @@ requires pod CIDR traffic to bypass firewalld entirely, hence the
 [ vault-server (192.168.1.202) ]
         │
         ▼
-[ lb1 (192.168.1.188) ──────────── dns1 (192.168.1.185) ]
-   ├─ dnsmasq → 'myhomelab.com'     (currently unused —
-   ├─ haproxy → :6443/:80/:443       lb1 serves DNS now)
-   └─ keepalived → owns VIP .50
+[ lb1 (.188) MASTER ◄──── VRRP 51 ────► lb2 (.185) BACKUP ]
+   ├─ keepalived → VIP 192.168.1.50 (MASTER owns it)
+   ├─ haproxy    → :6443/:80/:443 (both run; LB on VIP-holder serves traffic)
+   └─ dnsmasq    → 'myhomelab.com' (bind-dynamic; answers on VIP when held)
         │
         ▼
 [ kmaster1/2/3 (192.168.1.186/189/187) ]
@@ -389,7 +394,7 @@ requires pod CIDR traffic to bypass firewalld entirely, hence the
 ```
 
 `cluster_powerup.yml` enforces this order via `throttle: 1` over the
-list `dns1 → lb1 → kmaster1/2/3 → kworker1/2/3`, then waits for SSH on
+list `lb1 → lb2 → kmaster1/2/3 → kworker1/2/3`, then waits for SSH on
 each IP before declaring success. vault-server is handled separately
 by `all_powerup.yml` (which imports cluster_powerup.yml).
 

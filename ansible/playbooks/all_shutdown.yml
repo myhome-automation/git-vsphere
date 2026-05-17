@@ -9,7 +9,7 @@
 #
 # Order:
 #   1. workers
-#   2. dns + lb
+#   2. lb pair (DNS + HAProxy + keepalived)
 #   3. masters
 #   4. vault-server LAST
 #

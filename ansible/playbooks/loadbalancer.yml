@@ -1,6 +1,8 @@
 ---
 # Load balancer nodes (lb1, lb2) — HAProxy fronting k8s API + ingress.
-# lb1 is active; lb2 is standby. Use keepalived for VIP failover.
+# keepalived MASTER/BACKUP pair owns VIP 192.168.1.50.
+# Each host's role is set in inventory via keepalived_state /
+# keepalived_priority (MASTER=101 on lb1, BACKUP=100 on lb2).
 - name: loadbalancer | install HAProxy and keepalived
   hosts: loadbalancers
   become: true
@@ -79,19 +81,18 @@
       notify: restart haproxy
 
     # ── keepalived (VIP failover) ────────────────────────────────────────────
-    # Single-LB mode: only lb1 exists in this cluster (lb2 was dropped due
-    # to memory ceiling on the host). keepalived runs standalone as MASTER
-    # — it owns the VIP at all times; no failover peer.
-    # Interface auto-detected via ansible facts (ens192 on vmxnet3, not eth0).
+    # MASTER/BACKUP pair. Per-host state and priority come from inventory
+    # vars (keepalived_state, keepalived_priority). Interface auto-detected
+    # via ansible facts (ens192 on vmxnet3, not eth0).
     - name: write keepalived config
       copy:
         dest: /etc/keepalived/keepalived.conf
         content: |
           vrrp_instance VI_1 {
-            state MASTER
+            state {{ keepalived_state }}
             interface {{ ansible_default_ipv4.interface }}
             virtual_router_id 51
-            priority 101
+            priority {{ keepalived_priority }}
             advert_int 1
             authentication {
               auth_type PASS

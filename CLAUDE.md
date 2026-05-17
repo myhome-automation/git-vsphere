@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repo is
 
-Infrastructure-as-code for a 9-VM home-lab Kubernetes cluster running on a single ESXi 6.7 host (`192.168.1.174`, 60 GB RAM). The end state: 3 k8s masters + 3 workers + dns1 + lb1 + a `vault-server` source VM, all Rocky 9.7. Full layout, network topology, and CIDRs live in `docs/architecture.md`.
+Infrastructure-as-code for a 9-VM home-lab Kubernetes cluster running on a single ESXi 6.7 host (`192.168.1.174`, 60 GB RAM). The end state: 3 k8s masters + 3 workers + an HA load-balancer pair (lb1 MASTER + lb2 BACKUP, both running HAProxy + keepalived + dnsmasq) + a `vault-server` source VM, all Rocky 9.7. Full layout, network topology, and CIDRs live in `docs/architecture.md`.
 
 ## Build pipeline (current — read before changing anything)
 
@@ -83,15 +83,15 @@ Playbooks use **exact** group names. Renaming inventory groups silently runs the
 |-------|---------|---------|
 | `k8s_masters` | kmaster1/2/3 | `k8s_master.yml` |
 | `k8s_workers` | kworker1/2/3 | `k8s_worker.yml` |
-| `dns_dhcp` | dns1 (unused — see below) | `dns_dhcp.yml` (legacy) |
-| `loadbalancers` | lb1 (single-LB; lb2 dropped) | `loadbalancer.yml`, `dns.yml` |
+| `loadbalancers` | lb1 (MASTER 101), lb2 (BACKUP 100) | `loadbalancer.yml`, `dns.yml` |
 | `vault` | vault-server | `bootstrap-users.yml` (via `everyone`) |
-| `cluster` (children) | k8s_masters + k8s_workers + dns_dhcp + loadbalancers | most cluster plays — **excludes vault-server** |
+| `cluster` (children) | k8s_masters + k8s_workers + loadbalancers | most cluster plays — **excludes vault-server** |
 | `everyone` (children) | cluster + vault | `bootstrap-users.yml`, NM resolver play in `dns.yml` |
 
 Notes that aren't obvious from the inventory file:
-- **DNS lives on lb1**, not on dns1. `dns.yml` (current) supersedes the legacy `dns_dhcp.yml`. dns1 VM is a delete candidate.
-- **Single LB.** `lb2` was dropped (host memory ceiling). `loadbalancer.yml` runs keepalived standalone as MASTER — no failover peer.
+- **HA LB pair.** lb1 (MASTER prio 101) and lb2 (BACKUP prio 100) share keepalived VIP `192.168.1.50`. Both run HAProxy + dnsmasq; only the VIP holder serves traffic. Inventory carries the per-host `keepalived_state` / `keepalived_priority` vars.
+- **DNS is on the LB pair (not on a separate VM).** dnsmasq uses `bind-dynamic` so it answers on the VIP whenever this LB owns it. All cluster hosts resolve via `192.168.1.50`.
+- **lb2 was originally the `dns1` VM** (re-purposed 2026-05-17 after the GUI strip freed memory). At the ESXi level the VM's display name is now `lb2` but the disk path is still `datastore1/dns1/`.
 
 ## Variables
 
