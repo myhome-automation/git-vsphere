@@ -36,7 +36,11 @@ for pair in "nginx-1:80" "nginx-2:8080"; do
   name="${pair%%:*}"; port="${pair##*:}"
   echo "==> (re)launch $name on host port $port"
   podman rm -f "$name" 2>/dev/null || true
-  podman run -d --restart=always --name "$name" -p "${port}:80" "$IMAGE"
+  # --restart=unless-stopped (NOT =always): survives host reboots but
+  # respects explicit `podman stop` instead of immediately re-spawning
+  # the container. Without this, edge_shutdown.yml's `podman stop`
+  # races with the restart policy and the container comes right back.
+  podman run -d --restart=unless-stopped --name "$name" -p "${port}:80" "$IMAGE"
 done
 
 echo "==> done"

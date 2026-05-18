@@ -4,7 +4,7 @@
 # Ensure the rootless podman nginx HA pair on .203 is running and that
 # every routed path returns a 2xx through the proxy. Idempotent.
 #
-# Normally the containers come back automatically (--restart=always)
+# Normally the containers come back automatically (--restart=unless-stopped)
 # when the host boots, but if they were explicitly stopped (e.g. via
 # edge_shutdown.yml) we need to start them.
 #
@@ -19,6 +19,18 @@
   hosts: edge_proxy
   gather_facts: false
   tasks:
+    # Fix the restart policy on pre-existing containers that were
+    # created before the switch to unless-stopped. New containers from
+    # install.sh already get the right policy; this is a one-time
+    # remediation that's safe to run every powerup (idempotent).
+    - name: ensure restart policy is unless-stopped (fixes legacy --restart=always)
+      command: podman update --restart=unless-stopped nginx-1 nginx-2
+      register: policy_update
+      failed_when:
+        - policy_update.rc != 0
+        - "'no such container' not in (policy_update.stderr | lower)"
+      changed_when: false
+
     - name: start containers (no-op if already running)
       command: podman start nginx-1 nginx-2
       register: start_result
