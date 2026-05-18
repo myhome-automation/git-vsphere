@@ -38,7 +38,11 @@ server:
     path: "/v1/sys/health?standbyok=true&sealedcode=204&uninitcode=204"
   livenessProbe:
     enabled: true
-    path: "/v1/sys/health?standbyok=true"
+    # Without sealedcode=204, a sealed Vault returns 503 here and the
+    # kubelet kills the pod before anyone can run `vault operator unseal`.
+    # sealedcode=204 keeps liveness happy while the pod is sealed;
+    # readinessProbe still gates Service traffic on unsealed+active.
+    path: "/v1/sys/health?standbyok=true&sealedcode=204&uninitcode=204"
     initialDelaySeconds: 60
 
   # NodePort so:
