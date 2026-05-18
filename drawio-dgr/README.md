@@ -48,7 +48,7 @@ docs:
   topology ASCII diagram, network-flow per cluster
 - [`../docs/operations.md`](../docs/operations.md) — day-2 procedures
 - [`../docs/deployment.md`](../docs/deployment.md) — zero-to-running runbook
-- [`../CLAUDE.md`](../CLAUDE.md) — short orientation summary
+- [`../AGENTS.md`](../AGENTS.md) — short orientation summary
 
 If a diagram and a doc disagree, fix the diagram (the text is authoritative
 for this repo).

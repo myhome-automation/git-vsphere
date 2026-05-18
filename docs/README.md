@@ -28,5 +28,5 @@ you're debugging.
 - **Calico** v3.30.4 CNI, **Istio** 1.27.2 service mesh
 - **Internal DNS** (`myhomelab.com`) served by dnsmasq HA on the LB pair (answered by VIP holder)
 
-See [project memory](../../../home/bstha/.claude/projects/-apps-git-code-git-vsphere/memory/project_vsphere_k8s.md)
-(local-only) for the current build state.
+Local project notes are kept outside this repo (in `~/.local/state/git-vsphere/`)
+for the current build state.
