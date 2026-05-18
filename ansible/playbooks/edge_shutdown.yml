@@ -1,0 +1,33 @@
+---
+# edge_shutdown.yml
+#
+# Stop the rootless podman nginx HA pair on the edge host
+# (gdragon-ubuntu, 192.168.1.203). Idempotent — no-op if containers
+# aren't running.
+#
+# This is normally part of full_shutdown.yml, which stops the edge
+# proxy first so users don't see partial outages while the homelab
+# cluster is mid-shutdown.
+#
+# Usage:
+#   ansible-playbook -i inventory/hosts.ini --vault-password-file=.vault_pass \
+#     playbooks/edge_shutdown.yml
+
+- name: edge | stop nginx-1 and nginx-2 (rootless podman) on .203
+  hosts: edge_proxy
+  gather_facts: false
+  tasks:
+    - name: stop nginx containers (no-op if absent or already stopped)
+      command: podman stop --ignore --time 5 nginx-1 nginx-2
+      register: stop_result
+      changed_when: stop_result.stdout != ""
+
+    - name: confirm
+      command: podman ps --filter "name=nginx-" --format "{{ '{{' }}.Names{{ '}}' }} {{ '{{' }}.Status{{ '}}' }}"
+      register: ps_after
+      changed_when: false
+
+    - debug:
+        msg: |
+          Containers after stop:
+          {{ ps_after.stdout if ps_after.stdout != '' else '(none running)' }}

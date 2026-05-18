@@ -1,0 +1,85 @@
+---
+# vault_unseal.yml
+#
+# Unseal Vault on the local k3s cluster (k3os-local). Vault always
+# boots SEALED — the helm chart's liveness probe is configured with
+# sealedcode=204 so the pod stays alive, but the Service isn't ready
+# until we unseal.
+#
+# Reads keys from ~/.vault/init.json on the workstation (chmod 600).
+# Applies the first 3 unseal keys to each of vault-0, vault-1, vault-2.
+# Non-fatal if some pods are unreachable (e.g. vault-1 still
+# CrashLoopBackOff due to Calico IPPool overlap on local k3s).
+#
+# Part of full_powerup.yml — runs after the homelab cluster is up but
+# before the edge proxy verification (so /ui/ and /v1/ are answered).
+#
+# Usage:
+#   ansible-playbook -i inventory/hosts.ini --vault-password-file=.vault_pass \
+#     playbooks/vault_unseal.yml
+
+- name: vault | unseal pods on k3os-local
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    init_file: "{{ lookup('env', 'HOME') }}/.vault/init.json"
+    kube_context: k3os-local
+    namespace: vault
+    pods:
+      - vault-0
+      - vault-1
+      - vault-2
+
+  tasks:
+    - name: ensure init.json exists
+      stat:
+        path: "{{ init_file }}"
+      register: init_stat
+
+    - assert:
+        that: init_stat.stat.exists
+        fail_msg: |
+          {{ init_file }} not found. Vault has never been initialised on this
+          workstation, OR the keys were moved. Re-init with:
+            kubectl --context {{ kube_context }} -n {{ namespace }} exec vault-0 -- \
+              vault operator init -key-shares=5 -key-threshold=3 -format=json > {{ init_file }}
+          chmod 600 {{ init_file }}
+
+    - name: read unseal keys (first 3 of 5)
+      slurp:
+        src: "{{ init_file }}"
+      register: init_b64
+      no_log: true
+
+    - set_fact:
+        unseal_keys: "{{ (init_b64.content | b64decode | from_json).unseal_keys_b64[:3] }}"
+      no_log: true
+
+    - name: apply each unseal key to each pod
+      command: >
+        kubectl --context {{ kube_context }} -n {{ namespace }}
+        exec {{ item.0 }} -- vault operator unseal {{ item.1 }}
+      loop: "{{ pods | product(unseal_keys) | list }}"
+      loop_control:
+        label: "{{ item.0 }} <key>"
+      register: unseal
+      failed_when: false
+      changed_when: false
+      no_log: true
+
+    - name: report seal status per pod
+      command: >
+        kubectl --context {{ kube_context }} -n {{ namespace }}
+        exec {{ item }} -- vault status -format=json
+      loop: "{{ pods }}"
+      register: status_out
+      failed_when: false
+      changed_when: false
+
+    - name: summary
+      debug:
+        msg: "{{ item.item }}: {{ (item.stdout | from_json).sealed | default('unreachable') | string }}"
+      loop: "{{ status_out.results }}"
+      loop_control:
+        label: "{{ item.item }}"

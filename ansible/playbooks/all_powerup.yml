@@ -13,12 +13,34 @@
 #
 # Usage:
 #   ansible-playbook playbooks/all_powerup.yml
-- name: powerup | start vault-server first via ESXi vim-cmd
+- name: powerup | pre-check + start vault-server via ESXi vim-cmd
   hosts: localhost
   gather_facts: false
   vars:
     esxi_host: 192.168.1.174
   tasks:
+    # ── ESXi maintenance-mode pre-check ───────────────────────────────
+    # ESXi sometimes boots into maintenance mode after a dirty shutdown.
+    # In that state vim-cmd `power.on` returns "Power on failed" silently
+    # (hostd.log shows "State Transition not allowed"); the playbook
+    # would then wait 5 minutes for SSH and fail. Catch it upfront and
+    # exit with a clear message.
+    - name: query ESXi maintenance mode + power states
+      shell: |
+        ssh -o StrictHostKeyChecking=no root@{{ esxi_host }} \
+          "vim-cmd hostsvc/runtimeinfo | awk -F'\"' '/inMaintenanceMode/ {print \$1}'"
+      register: maint_check
+      changed_when: false
+
+    - name: fail fast if ESXi is in maintenance mode
+      fail:
+        msg: |
+          ESXi host {{ esxi_host }} is in MAINTENANCE MODE — VM power.on
+          will silently fail. Exit it first:
+            ssh root@{{ esxi_host }} 'vim-cmd hostsvc/maintenance_mode_exit'
+          Then re-run this playbook.
+      when: "'true' in maint_check.stdout"
+
     - name: get vault-server vmid
       shell: |
         ssh -o StrictHostKeyChecking=no root@{{ esxi_host }} \

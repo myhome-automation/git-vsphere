@@ -32,6 +32,24 @@
       - kworker3
 
   tasks:
+    # ── ESXi maintenance-mode pre-check (silent killer; see all_powerup.yml) ──
+    - name: query ESXi maintenance mode
+      shell: |
+        ssh -o StrictHostKeyChecking=no root@{{ esxi_host }} \
+          "vim-cmd hostsvc/runtimeinfo | awk -F'\"' '/inMaintenanceMode/ {print \$1}'"
+      register: maint_check
+      changed_when: false
+
+    - name: fail fast if ESXi is in maintenance mode
+      fail:
+        msg: |
+          ESXi host {{ esxi_host }} is in MAINTENANCE MODE — VM power.on
+          will silently fail and the wait_for SSH will time out at 5 min.
+          Exit it first:
+            ssh root@{{ esxi_host }} 'vim-cmd hostsvc/maintenance_mode_exit'
+          Then re-run this playbook.
+      when: "'true' in maint_check.stdout"
+
     - name: get vmid for each VM from ESXi
       shell: |
         ssh -o StrictHostKeyChecking=no root@{{ esxi_host }} \

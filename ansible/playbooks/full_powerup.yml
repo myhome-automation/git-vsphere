@@ -1,0 +1,59 @@
+---
+# full_powerup.yml
+#
+# End-to-end power-up across all THREE physical hosts in dependency order:
+#
+#   1. Pre-check: ESXi NOT in maintenance mode (silent killer — see
+#      all_powerup.yml; bit us 2026-05-18).
+#   2. Power on all 9 ESXi VMs (vault-server first, then cluster) via
+#      all_powerup.yml. Waits for SSH + does chronyc makestep + probes
+#      k8s API + DNS via the keepalived VIP.
+#   3. Unseal Vault on local k3s (vault_unseal.yml). Vault always boots
+#      sealed; without this the /vault/ and /v1/ paths through the edge
+#      proxy return 503.
+#   4. (Re)start the edge nginx HA pair on .203 (edge_powerup.yml) and
+#      probe all 6 user-facing paths to confirm end-to-end reachability.
+#
+# Workstation gdragon (.181) is assumed to already be running because
+# ansible runs from it; this playbook only touches its k3s API via
+# kubectl in step 3.
+#
+# Layers compared:
+#   cluster_powerup.yml — 8 cluster VMs only (assumes vault-server is up)
+#   all_powerup.yml     — 9 VMs (vault-server + cluster)
+#   full_powerup.yml    — 9 VMs + Vault unseal + edge proxy verify   ← this file
+#
+# Usage:
+#   cd ansible/
+#   ansible-playbook -i inventory/hosts.ini --vault-password-file=.vault_pass \
+#     playbooks/full_powerup.yml
+
+- name: full | step 1/3 — power on all 9 ESXi VMs (with maintenance-mode pre-check)
+  import_playbook: all_powerup.yml
+
+- name: full | step 2/3 — unseal Vault on local k3s
+  import_playbook: vault_unseal.yml
+
+- name: full | step 3/3 — (re)start edge proxy on .203 and verify routes
+  import_playbook: edge_powerup.yml
+
+- name: full | final report
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - debug:
+        msg: |
+          ====== full_powerup.yml complete ======
+          • ESXi maintenance-mode pre-check: passed.
+          • All 9 ESXi VMs: powered on.
+          • k8s API @ https://192.168.1.50:6443: healthy.
+          • Vault on k3os-local: unseal applied to vault-0/1/2 (some may
+            still be CrashLoopBackOff due to Calico IPPool overlap —
+            that's a known limitation; vault-0 leader should be active).
+          • Edge nginx containers on .203: running; six proxy paths probed.
+
+          Next:
+            kubectl --context homelab get nodes      # expect all Ready
+            curl http://192.168.1.203/               # landing page
+            curl http://192.168.1.203/grafana/       # Grafana login
+            curl http://192.168.1.203/ui/            # Vault UI

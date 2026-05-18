@@ -1,0 +1,46 @@
+---
+# full_shutdown.yml
+#
+# End-to-end shutdown across all THREE physical hosts in dependency order:
+#
+#   1. Stop edge nginx-1 + nginx-2 on .203 (gdragon-ubuntu)
+#      → user-facing first; we want routing to go dark before the
+#        upstream backends start dropping.
+#   2. Shut down all 9 ESXi VMs (cluster + vault-server) via all_shutdown.yml
+#      → kworker* → lb1/lb2 → kmaster* → vault-server (~30 s total)
+#   3. Workstation gdragon (.181, k3s + ansible) is LEFT RUNNING.
+#      → it's where ansible runs from; if we shut it down we lose the
+#        controller. Power it off manually (`shutdown -h now`) when
+#        appropriate.
+#   4. ESXi host (.174) is LEFT RUNNING.
+#      → SSH to root@.174 and `poweroff` manually after this completes
+#        if you're doing physical maintenance.
+#
+# Layers compared:
+#   cluster_shutdown.yml  — 8 cluster VMs only (vault-server stays up)
+#   all_shutdown.yml      — 9 VMs (cluster + vault-server)
+#   full_shutdown.yml     — 9 VMs + edge proxy on .203   ← this file
+#
+# Usage:
+#   cd ansible/
+#   ansible-playbook -i inventory/hosts.ini --vault-password-file=.vault_pass \
+#     playbooks/full_shutdown.yml
+
+- name: full | step 1/2 — stop edge proxy on .203 first
+  import_playbook: edge_shutdown.yml
+
+- name: full | step 2/2 — shut down all 9 ESXi VMs
+  import_playbook: all_shutdown.yml
+
+- name: full | report
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - debug:
+        msg: |
+          ====== full_shutdown.yml complete ======
+          • Edge nginx containers (nginx-1, nginx-2) stopped on .203.
+          • All 9 ESXi VMs scheduled for shutdown (off in ~30 s).
+          • Workstation gdragon (.181) and ESXi host (.174) are still up;
+            power them off manually if needed.
+          To bring everything back: ansible-playbook playbooks/full_powerup.yml

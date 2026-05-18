@@ -3,9 +3,31 @@
 How to shut down, power up, and otherwise wrangle the home-lab cluster.
 All playbooks are under `ansible/playbooks/`.
 
+## Shutdown / powerup — four tiers (pick the right one)
+
+| Playbook | Scope | Edge proxy on .203 | ESXi VMs | Vault unseal | When to use |
+|---|---|---|---|---|---|
+| `cluster_shutdown.yml` / `cluster_powerup.yml` | 8 cluster VMs only | — | yes (vault-server skipped) | — | quick cycle of just the k8s cluster |
+| `all_shutdown.yml` / `all_powerup.yml` | 9 ESXi VMs | — | yes (incl. vault-server) | — | full ESXi-host maintenance window |
+| `edge_shutdown.yml` / `edge_powerup.yml` | 2 podman containers on .203 | yes | — | — | rotating edge image, isolating proxy outage |
+| **`full_shutdown.yml` / `full_powerup.yml`** | **3-host orchestration** | yes | yes | yes (post-boot) | **default for a clean start/stop of the whole lab** |
+
+The `full_*` orchestrators just import the smaller ones in the right
+order, so the building blocks stay re-runnable on their own.
+
 ---
 
 ## Shutdown
+
+**Full lab (edge proxy + 9 VMs) — recommended for "shutting down the lab":**
+```bash
+cd ansible/
+ansible-playbook -i inventory/hosts.ini --vault-password-file=.vault_pass \
+  playbooks/full_shutdown.yml
+```
+Stops the edge nginx pair on .203 first (so user-facing routes go dark
+cleanly), then shuts the 9 ESXi VMs in `all_shutdown.yml` order. Leaves
+the workstation gdragon (.181) and the ESXi host (.174) running.
 
 **Cluster-only (vault-server LEFT RUNNING) — default:**
 ```bash
@@ -34,6 +56,24 @@ ssh root@192.168.1.174 'vim-cmd vmsvc/getallvms | while read v _; do \
 ---
 
 ## Power up
+
+**Full lab (9 VMs + Vault unseal + edge proxy verify) — recommended:**
+```bash
+cd ansible/
+ansible-playbook -i inventory/hosts.ini --vault-password-file=.vault_pass \
+  playbooks/full_powerup.yml
+```
+What it does, in order:
+1. **ESXi maintenance-mode pre-check** (fails fast with a clear message
+   if hostd is in maintenance — the silent killer that bit us 2026-05-18).
+2. Power on all 9 VMs (vault-server first, then cluster).
+3. `chronyc makestep` on every VM to absorb any clock drift inherited
+   from ESXi.
+4. Probe k8s API + DNS via the keepalived VIP.
+5. **Unseal Vault** on local k3s using `~/.vault/init.json` keys
+   (vault-0 leader; vault-1 may still CrashLoopBackOff due to the
+   IPPool overlap — known limitation).
+6. (Re)start the edge nginx pair on .203 and probe all six proxy paths.
 
 **Cluster-only (assumes vault-server already running) — default:**
 ```bash

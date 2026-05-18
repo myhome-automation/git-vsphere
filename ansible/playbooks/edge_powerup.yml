@@ -1,0 +1,70 @@
+---
+# edge_powerup.yml
+#
+# Ensure the rootless podman nginx HA pair on .203 is running and that
+# every routed path returns a 2xx through the proxy. Idempotent.
+#
+# Normally the containers come back automatically (--restart=always)
+# when the host boots, but if they were explicitly stopped (e.g. via
+# edge_shutdown.yml) we need to start them.
+#
+# Part of full_powerup.yml — run after the homelab cluster is up and
+# Vault is unsealed, so the upstream NodePorts actually answer.
+#
+# Usage:
+#   ansible-playbook -i inventory/hosts.ini --vault-password-file=.vault_pass \
+#     playbooks/edge_powerup.yml
+
+- name: edge | start nginx-1 + nginx-2 on .203
+  hosts: edge_proxy
+  gather_facts: false
+  tasks:
+    - name: start containers (no-op if already running)
+      command: podman start nginx-1 nginx-2
+      register: start_result
+      changed_when: "'nginx' in start_result.stdout"
+      failed_when:
+        - start_result.rc != 0
+        - "'no such container' not in (start_result.stderr | lower)"
+
+    - name: show podman state
+      command: podman ps --filter "name=nginx-" --format "{{ '{{' }}.Names{{ '}}' }} {{ '{{' }}.Image{{ '}}' }} {{ '{{' }}.Status{{ '}}' }} {{ '{{' }}.Ports{{ '}}' }}"
+      register: ps_after
+      changed_when: false
+
+    - debug:
+        msg: "{{ ps_after.stdout_lines }}"
+
+- name: edge | verify all proxy paths from workstation
+  hosts: localhost
+  gather_facts: false
+  vars:
+    proxy_base: "http://192.168.1.203"
+    paths_to_probe:
+      - { path: "/",            ok: [200] }
+      - { path: "/grafana/",    ok: [200, 302] }
+      - { path: "/prometheus/", ok: [200, 302] }
+      - { path: "/loki/ready",  ok: [200] }
+      - { path: "/argocd/",     ok: [200, 301, 307] }
+      - { path: "/ui/",         ok: [200] }
+      - { path: "/v1/sys/health", ok: [200, 429, 472, 473] }   # Vault health codes
+  tasks:
+    - name: probe path
+      uri:
+        url: "{{ proxy_base }}{{ item.path }}"
+        status_code: "{{ item.ok }}"
+        follow_redirects: none
+        timeout: 5
+      loop: "{{ paths_to_probe }}"
+      register: probes
+      retries: 5
+      delay: 4
+      until: probes is succeeded
+      failed_when: false
+
+    - name: summary
+      debug:
+        msg: "{{ '%-22s'|format(item.item.path) }}  →  {{ item.status | default('FAIL') }}"
+      loop: "{{ probes.results }}"
+      loop_control:
+        label: "{{ item.item.path }}"
