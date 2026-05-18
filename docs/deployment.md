@@ -188,5 +188,6 @@ ssh ansible@lb1 'sudo systemctl start keepalived'              # VIP returns
 | calico-node 0/1 after powerup | firewalld blocks BGP / pod CIDR | Already fixed in k8s_master.yml + k8s_worker.yml; see [calico.md](calico.md) C1 |
 | `kubeadm init` fails with "unknown service runtime.v1.RuntimeService" | Rocky's containerd ships with CRI disabled | Always regenerate config — k8s_master.yml does this |
 | ovftool / Packer attempts | Both abandoned | Don't reach for them; only `terraform/clone-from-vault.sh` is current |
+| `cluster_powerup.yml`: all `power.on` calls succeed at the playbook level but every VM stays `Powered off`; hostd.log says "State Transition not allowed" | ESXi host is in maintenance mode (sometimes set automatically after a dirty shutdown) | `ssh root@192.168.1.174 'vim-cmd hostsvc/maintenance_mode_exit'`. See [operations.md](operations.md) "Powerup that succeeds but leaves all VMs off". |
 
 Full per-component breakdowns under `docs/` — see [README.md](README.md).

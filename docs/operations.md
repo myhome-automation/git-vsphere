@@ -61,6 +61,31 @@ Cluster API typically reachable on `https://192.168.1.50:6443` within
 ~1 min of all VMs being SSHable (kubelet + control plane pods need to
 re-establish).
 
+### Powerup that "succeeds" but leaves all VMs off
+
+Symptoms: `power on <vmid>` prints `Power on failed`; `hostd.log` says
+`State Transition (VM_STATE_OFF -> VM_STATE_POWERING_ON) not allowed for this Vm`;
+the playbook's wait_for SSH then times out at 5 minutes.
+
+Root cause checklist (run in order):
+
+1. **ESXi in maintenance mode** (most common after a dirty host shutdown).
+   ```bash
+   ssh root@192.168.1.174 'vim-cmd hostsvc/runtimeinfo | grep -i maintenance'
+   # if inMaintenanceMode = true
+   ssh root@192.168.1.174 'vim-cmd hostsvc/maintenance_mode_exit'
+   ```
+   Then re-run `cluster_powerup.yml`.
+
+2. **hostd VMX cache stale** — `vim-cmd vmsvc/reload <vmid>` then retry.
+
+3. **Worse hostd state** — `/etc/init.d/hostd restart` (safe when no VMs running).
+
+4. **Last resort** — `/sbin/services.sh restart` followed by
+   `vim-cmd vmsvc/unregister <vmid>` + `vim-cmd solo/registervm <vmx-path>`.
+   (Note that re-register gives the VM a new vmid; the playbook resolves
+   by name so it still finds the host.)
+
 ---
 
 ## Reset the kubernetes cluster (keep VMs)

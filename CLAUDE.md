@@ -50,13 +50,38 @@ Beyond the ESXi host, the home lab has expanded to two more boxes:
 - **`gdragon-ubuntu`** (192.168.1.203, Ubuntu 24.04) — edge / reverse proxy host. Runs **2 podman-rootless nginx containers** from `quay.io/bpraisa/nginx:homelab-proxy-1.0` (the custom image we build from `nginx-proxy/Dockerfile`); HA via two host-port bindings (`:80` and `:8080`) + `--restart=always`. Path-based routing to k3s/homelab services (`/grafana/`, `/prometheus/`, `/loki/`, `/vault/`, `/argocd/`). See `nginx-proxy/README.md`.
 - **ESXi 6.7** (192.168.1.174) — the original hypervisor; runs the 9 homelab VMs.
 
-Cross-machine deploy: `bash nginx-proxy/install.sh 192.168.1.203` (re-pulls + restarts the HA pair); `bash nginx-proxy/build-and-push.sh quay.io/bpraisa/nginx:homelab-proxy-1.0` (rebuild + push image — needs persistent `podman login quay.io` first; `/run/user/$UID/containers/auth.json` is *transient*, prefer `--authfile ~/.config/containers/auth.json`).
+Cross-machine deploy: `bash nginx-proxy/install.sh 192.168.1.203` (re-pulls + restarts the HA pair); `bash nginx-proxy/build-and-push.sh quay.io/bpraisa/nginx:homelab-proxy-1.0` (rebuild + push image — uses the robot creds in ansible-vault; bootstrap the login with `ansible-playbook ... playbooks/quay-login.yml`).
+
+## Two load-balancer layers (different jobs)
+
+1. **Homelab API LB pair** — `lb1` MASTER + `lb2` BACKUP on the ESXi side. keepalived VIP `192.168.1.50` fronting HAProxy. Used by the k8s control plane (kubeadm `--control-plane-endpoint=192.168.1.50:6443`), HTTP/HTTPS NodePort backends (kworker*:30080/30443), and the homelab DNS zone `myhomelab.com` via dnsmasq HA. Configured in `ansible/playbooks/loadbalancer.yml` + `dns.yml`. Failover ~3 s.
+2. **Edge user-facing nginx proxy** — `gdragon-ubuntu` 192.168.1.203 with 2 podman containers; path-based routing to the k3s NodePort services. NOT in the homelab k8s API path — it's a separate user-facing layer that fronts Grafana / Prometheus / Loki / Vault / ArgoCD.
+
+## App catalog (where each thing lives)
+
+| App | Cluster | NodePort | URL via nginx | Role |
+|---|---|---|---|---|
+| Grafana ("search head") | k3os-local | 30300 | `/grafana/` | UI; queries Prometheus + Loki |
+| Prometheus | k3os-local | 30320 | `/prometheus/` | central TSDB; receives remote_write from homelab |
+| Loki | k3os-local | 30310 | `/loki/` | log store; receives Promtail pushes from both clusters |
+| Vault | k3os-local | 30200 | `/vault/` ⚠ | secrets (KV-v2 + AppRole); 3-replica HA — currently all 3 pods in CrashLoopBackOff (sealed → liveness probe kill loop, blocked by Calico IPPool overlap) |
+| ArgoCD | k3os-local | 30401 (http) / 30400 (https) | `/argocd/` | GitOps; deploys Vault via `argocd/vault.yaml` |
+| k8s API (homelab) | homelab | (VIP :6443) | n/a | control plane via HAProxy |
+| DNS (homelab) | homelab | (VIP :53) | n/a | `myhomelab.com` |
+| Promtail | both | DaemonSet | n/a | ships logs to local Loki, tagged `cluster=homelab` or `cluster=k3os-local` |
+| Prometheus (homelab) | homelab | ClusterIP | n/a | scrapes local + remote_writes to gdragon:30320 |
+
+**Sub-path mode status (verified 2026-05-18):** through the nginx edge proxy, only `/` (landing) and `/loki/ready` return 200. The rest 404 because the upstream app sends an absolute redirect that escapes its sub-path prefix:
+- `/grafana/` → 302 to `/login` → 404. Fix: `grafana.ini [server] root_url = /grafana/` + `serve_from_sub_path = true` (helm values).
+- `/prometheus/` → 302 to `/query` → 404. Fix: Prometheus args `--web.external-url=http://192.168.1.203/prometheus --web.route-prefix=/`.
+- `/argocd/` → 404 (upstream doesn't know it's behind a prefix). Fix: `argocd-cmd-params-cm` `server.rootpath: /argocd` + restart argocd-server.
+- `/vault/` → 307 to `/ui/` → 404. Fix: helm `ui.serviceType=NodePort` + Vault config `api_addr = "http://192.168.1.203/vault"` and clean reverse-proxy `proxy_redirect`. **Also Vault itself is currently down** (see Vault section).
 
 ## Vault on local k3s (production-shape HA, ArgoCD-managed)
 
 3-replica Vault StatefulSet, integrated Raft storage, helm chart `hashicorp/vault 0.31.0` (image `1.20.4`). Deployed via ArgoCD Application at `argocd/vault.yaml`; values mirror at `vault/values.yaml`. UI: `http://192.168.1.181:30200/ui/`. Unseal keys + root token kept at `~/.vault/init.json` on gdragon (chmod 600) — should be moved to a password manager and removed from disk.
 
-Current state: `vault-0` is leader (init'd, unsealed, KV-v2 at `secret/`, AppRole auth enabled). `vault-1`/`vault-2` pods up but **not yet raft-joined** — blocked by Calico IPPool overlap on k3s (`192.168.0.0/16` IPPool ∩ home network `192.168.1.0/24`), which prevents pod-to-pod from `vault-1` → `vault-0`. A workstation-level `systemd` unit (`k3s-pod-masq.service`) masquerades pod → external traffic but doesn't fix pod-to-pod within the affected pool. Proper fix: migrate IPPool to a non-overlapping CIDR (destructive — rebuilds all pods). See `vault/README.md`.
+Current state (2026-05-18): **all 3 pods CrashLoopBackOff** (vault-0 ~28 restarts, vault-1/2 ~130+). Vault starts up sealed; helm chart's liveness probe (`/v1/sys/health` → 503 when sealed) kills the container before anyone can `vault operator unseal`. Underlying root cause is still the Calico IPPool overlap on k3s (`192.168.0.0/16` IPPool ∩ home network `192.168.1.0/24`) — vault-1/vault-2 never raft-joined, and now vault-0 is fighting the probe alone. A workstation-level `systemd` unit (`k3s-pod-masq.service`) masquerades pod → external traffic but doesn't fix pod-to-pod within the affected pool. Unseal keys + root token kept at `~/.vault/init.json` on gdragon (chmod 600). Recovery requires either (a) temporarily disable the liveness probe on vault-0, unseal, then re-enable, or (b) the proper destructive fix: migrate IPPool to a non-overlapping CIDR (rebuilds all pods on the local k3s). See `vault/README.md`.
 
 ```bash
 cd ansible/
@@ -149,6 +174,7 @@ These show up any time a script touches the host at `192.168.1.174`:
 - **`00:0c:29:xx:xx:xx` is VMware's reserved OUI** and can't be set as a static MAC (vmkfstools script regenerates a fresh MAC anyway).
 - **`/tmp` is a ramdisk** — don't write large logs there; it fills and blocks subsequent scp.
 - **VMX edits need `vim-cmd vmsvc/reload <vmid>` before power.on** (hostd caches VMX in memory).
+- **`vim-cmd vmsvc/power.on` silently fails ("Power on failed" + hostd.log "State Transition not allowed for this Vm") when the host is in maintenance mode.** Always check first: `ssh root@192.168.1.174 'vim-cmd hostsvc/runtimeinfo | grep -i maintenance'`. Exit with `vim-cmd hostsvc/maintenance_mode_exit`. ESXi sometimes boots into maintenance mode after a dirty shutdown — bit us 2026-05-18 (cluster_powerup looked successful but all VMs stayed off).
 
 Full failure-mode catalogs are in `packer/TROUBLESHOOTING.md` and `docs/esxi-host.md`.
 
