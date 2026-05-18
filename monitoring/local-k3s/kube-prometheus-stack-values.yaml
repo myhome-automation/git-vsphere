@@ -24,6 +24,11 @@ prometheus:
       cluster: k3os-local
     # Accept remote_write from homelab Prometheus.
     enableRemoteWriteReceiver: true
+    # Serve under /prometheus/ behind the edge nginx proxy at .203.
+    # Direct NodePort (http://192.168.1.181:30320) still serves the same
+    # /prometheus/* paths; the nginx upstream just forwards as-is.
+    externalUrl: http://192.168.1.203/prometheus
+    routePrefix: /prometheus
     # Modest retention — local k3s only has 41 GiB free disk.
     retention: 7d
     retentionSize: 8GiB
@@ -55,6 +60,14 @@ prometheus:
 grafana:
   adminPassword: "changeme-home-lab"   # rotate via `helm upgrade --set grafana.adminPassword=...`
   defaultDashboardsTimezone: "America/Chicago"
+  # Serve under /grafana/ behind the edge nginx proxy at .203.
+  # Grafana still serves on its NodePort too; the root_url just controls
+  # what hostname/prefix Grafana uses in its absolute redirects.
+  grafana.ini:
+    server:
+      domain: 192.168.1.203
+      root_url: "http://192.168.1.203/grafana/"
+      serve_from_sub_path: true
   persistence:
     enabled: true
     storageClassName: local-path

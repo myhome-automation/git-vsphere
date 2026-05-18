@@ -36,7 +36,7 @@ State as of 2026-05-17. Spans **three physical machines** plus 9 VMs:
 ┌─────────────────────────────────────────────────────────────────────────┐
 │  gdragon-ubuntu (192.168.1.203) — Ubuntu 24.04 LTS, edge proxy host     │
 │  podman 4.9 rootless, 2 nginx containers (:80 nginx-1, :8080 nginx-2)   │
-│  Custom image: quay.io/bpraisa/nginx:homelab-proxy-1.0                  │
+│  Custom image: quay.io/bpraisa/nginx:homelab-proxy-1.3                  │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -180,7 +180,7 @@ There are TWO independent load-balancer layers in this lab:
 |---|---|
 | Host | gdragon-ubuntu (192.168.1.203, Ubuntu 24.04) |
 | Purpose | Path-based reverse proxy to k3s and homelab user-facing apps |
-| Containers | 2× `quay.io/bpraisa/nginx:homelab-proxy-1.0` (rootless podman) |
+| Containers | 2× `quay.io/bpraisa/nginx:homelab-proxy-1.3` (rootless podman) |
 | Ports | nginx-1 → host :80, nginx-2 → host :8080 |
 | HA model | Both run continuously, `--restart=always`; if `:80` is wedged, users fall back to `:8080`. True single-VIP failover would need keepalived in front. |
 | Config | baked into the image — no host volume mount; rebuild + push to bump |

@@ -47,10 +47,10 @@ Cross-cluster monitoring: Grafana at `http://192.168.1.181:30300` (admin / `chan
 Beyond the ESXi host, the home lab has expanded to two more boxes:
 
 - **`gdragon`** (workstation, 192.168.1.181, Rocky 9) — runs `k3s` (single-node), the cross-cluster monitoring stack, **HashiCorp Vault** (3-replica HA shape, `vault-0` is currently the active leader), ArgoCD, and is where ansible runs from. Local `/var` was grown to 128 GiB after a hot-added 100 GiB disk to fit the Vault + monitoring PVCs.
-- **`gdragon-ubuntu`** (192.168.1.203, Ubuntu 24.04) — edge / reverse proxy host. Runs **2 podman-rootless nginx containers** from `quay.io/bpraisa/nginx:homelab-proxy-1.0` (the custom image we build from `nginx-proxy/Dockerfile`); HA via two host-port bindings (`:80` and `:8080`) + `--restart=always`. Path-based routing to k3s/homelab services (`/grafana/`, `/prometheus/`, `/loki/`, `/vault/`, `/argocd/`). See `nginx-proxy/README.md`.
+- **`gdragon-ubuntu`** (192.168.1.203, Ubuntu 24.04) — edge / reverse proxy host. Runs **2 podman-rootless nginx containers** from `quay.io/bpraisa/nginx:homelab-proxy-1.3` (the custom image we build from `nginx-proxy/Dockerfile`); HA via two host-port bindings (`:80` and `:8080`) + `--restart=always`. Path-based routing to k3s/homelab services (`/grafana/`, `/prometheus/`, `/loki/`, `/vault/`, `/argocd/`). See `nginx-proxy/README.md`.
 - **ESXi 6.7** (192.168.1.174) — the original hypervisor; runs the 9 homelab VMs.
 
-Cross-machine deploy: `bash nginx-proxy/install.sh 192.168.1.203` (re-pulls + restarts the HA pair); `bash nginx-proxy/build-and-push.sh quay.io/bpraisa/nginx:homelab-proxy-1.0` (rebuild + push image — uses the robot creds in ansible-vault; bootstrap the login with `ansible-playbook ... playbooks/quay-login.yml`).
+Cross-machine deploy: `bash nginx-proxy/install.sh 192.168.1.203` (re-pulls + restarts the HA pair); `bash nginx-proxy/build-and-push.sh quay.io/bpraisa/nginx:homelab-proxy-1.3` (rebuild + push image — uses the robot creds in ansible-vault; bootstrap the login with `ansible-playbook ... playbooks/quay-login.yml`).
 
 ## Two load-balancer layers (different jobs)
 
@@ -64,24 +64,28 @@ Cross-machine deploy: `bash nginx-proxy/install.sh 192.168.1.203` (re-pulls + re
 | Grafana ("search head") | k3os-local | 30300 | `/grafana/` | UI; queries Prometheus + Loki |
 | Prometheus | k3os-local | 30320 | `/prometheus/` | central TSDB; receives remote_write from homelab |
 | Loki | k3os-local | 30310 | `/loki/` | log store; receives Promtail pushes from both clusters |
-| Vault | k3os-local | 30200 | `/vault/` ⚠ | secrets (KV-v2 + AppRole); 3-replica HA — currently all 3 pods in CrashLoopBackOff (sealed → liveness probe kill loop, blocked by Calico IPPool overlap) |
+| Vault | k3os-local | 31326 (vault-active, leader-only) | `/vault/` ✅ (API) | secrets (KV-v2 + AppRole); 3-replica HA — vault-0 leader, vault-2 joined, vault-1 still CrashLoopBackOff (Calico IPPool blocks its pod IP). API works via proxy; SPA UI needs direct NodePort. |
 | ArgoCD | k3os-local | 30401 (http) / 30400 (https) | `/argocd/` | GitOps; deploys Vault via `argocd/vault.yaml` |
 | k8s API (homelab) | homelab | (VIP :6443) | n/a | control plane via HAProxy |
 | DNS (homelab) | homelab | (VIP :53) | n/a | `myhomelab.com` |
 | Promtail | both | DaemonSet | n/a | ships logs to local Loki, tagged `cluster=homelab` or `cluster=k3os-local` |
 | Prometheus (homelab) | homelab | ClusterIP | n/a | scrapes local + remote_writes to gdragon:30320 |
 
-**Sub-path mode status (verified 2026-05-18):** through the nginx edge proxy, only `/` (landing) and `/loki/ready` return 200. The rest 404 because the upstream app sends an absolute redirect that escapes its sub-path prefix:
-- `/grafana/` → 302 to `/login` → 404. Fix: `grafana.ini [server] root_url = /grafana/` + `serve_from_sub_path = true` (helm values).
-- `/prometheus/` → 302 to `/query` → 404. Fix: Prometheus args `--web.external-url=http://192.168.1.203/prometheus --web.route-prefix=/`.
-- `/argocd/` → 404 (upstream doesn't know it's behind a prefix). Fix: `argocd-cmd-params-cm` `server.rootpath: /argocd` + restart argocd-server.
-- `/vault/` → 307 to `/ui/` → 404. Fix: helm `ui.serviceType=NodePort` + Vault config `api_addr = "http://192.168.1.203/vault"` and clean reverse-proxy `proxy_redirect`. **Also Vault itself is currently down** (see Vault section).
+**Sub-path mode status (verified 2026-05-18 with image `homelab-proxy-1.3`):** all six paths return 200 through the edge nginx at `http://192.168.1.203/`:
+- `/` → landing page
+- `/grafana/` → `/grafana/login` (configured via helm: `grafana.ini server.root_url=/grafana/` + `serve_from_sub_path=true`)
+- `/prometheus/` → `/prometheus/query` (configured via helm: `externalUrl=http://192.168.1.203/prometheus` + `routePrefix=/prometheus`)
+- `/loki/ready` (Loki has no UI; nginx strips `/loki/` since Loki's endpoints live at root)
+- `/argocd/` (configured via `argocd-cmd-params-cm` → `server.rootpath: /argocd`)
+- `/vault/v1/sys/health` and `/vault/` (nginx strips `/vault/` and rewrites response Location headers via `proxy_redirect ~^/(.*)$ /vault/$1`; Vault has no native sub-path support)
+
+Vault's SPA UI makes absolute fetches that escape the proxy mount — full UI use still needs the direct `vault-active` NodePort at `http://192.168.1.181:31326/ui/`. API calls (`/vault/v1/...`) work end-to-end through the proxy.
 
 ## Vault on local k3s (production-shape HA, ArgoCD-managed)
 
 3-replica Vault StatefulSet, integrated Raft storage, helm chart `hashicorp/vault 0.31.0` (image `1.20.4`). Deployed via ArgoCD Application at `argocd/vault.yaml`; values mirror at `vault/values.yaml`. UI: `http://192.168.1.181:30200/ui/`. Unseal keys + root token kept at `~/.vault/init.json` on gdragon (chmod 600) — should be moved to a password manager and removed from disk.
 
-Current state (2026-05-18): **all 3 pods CrashLoopBackOff** (vault-0 ~28 restarts, vault-1/2 ~130+). Vault starts up sealed; helm chart's liveness probe (`/v1/sys/health` → 503 when sealed) kills the container before anyone can `vault operator unseal`. Underlying root cause is still the Calico IPPool overlap on k3s (`192.168.0.0/16` IPPool ∩ home network `192.168.1.0/24`) — vault-1/vault-2 never raft-joined, and now vault-0 is fighting the probe alone. A workstation-level `systemd` unit (`k3s-pod-masq.service`) masquerades pod → external traffic but doesn't fix pod-to-pod within the affected pool. Unseal keys + root token kept at `~/.vault/init.json` on gdragon (chmod 600). Recovery requires either (a) temporarily disable the liveness probe on vault-0, unseal, then re-enable, or (b) the proper destructive fix: migrate IPPool to a non-overlapping CIDR (rebuilds all pods on the local k3s). See `vault/README.md`.
+Current state (2026-05-18, after fix): `vault-0` is Raft leader, unsealed, active. Liveness probe was the crash-loop trigger — default helm path `/v1/sys/health?standbyok=true` returns 503 when sealed and the kubelet killed the pod before it could be unsealed. Fixed in `argocd/vault.yaml` + `vault/values.yaml`: probe path now `?standbyok=true&sealedcode=204&uninitcode=204`. After applying, vault-0 stayed up, manual unseal with `~/.vault/init.json` keys completed cleanly. `vault-2` also recovered into the raft cluster. `vault-1` still CrashLoopBackOff (Calico IPPool overlap `192.168.0.0/16` ∩ home `192.168.1.0/24` blocks the raft-join path for this pod's allocated IP). The `vault-active` Service has only the leader (`NodePort 31326`); the generic `vault` Service (`30200`) load-balances across all pods including sealed ones — nginx upstream is therefore pointed at `:31326`. Unseal keys + root token at `~/.vault/init.json` on gdragon (chmod 600). See `vault/README.md`.
 
 ```bash
 cd ansible/
