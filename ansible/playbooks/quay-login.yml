@@ -18,7 +18,7 @@
 
 - name: quay-login | persist podman credentials for quay.io
   hosts: edge_proxy
-  gather_facts: false
+  gather_facts: true   # needed for ansible_user_dir
 
   vars:
     authfile: "{{ ansible_user_dir }}/.config/containers/auth.json"
@@ -30,18 +30,25 @@
         state: directory
         mode: "0700"
 
+    # Wipe any stale auth so a failed login doesn't silently keep old creds.
+    - name: remove any stale auth file
+      file:
+        path: "{{ authfile }}"
+        state: absent
+
     - name: podman login (password via stdin, never appears in logs)
       command: >
         podman login
-        --username {{ vault_quay_username }}
+        --username={{ vault_quay_username }}
         --password-stdin
-        --authfile {{ authfile }}
+        --authfile={{ authfile }}
         quay.io
       args:
         stdin: "{{ vault_quay_password }}"
       no_log: true
       register: login_out
       changed_when: "'Login Succeeded' in login_out.stdout"
+      failed_when: "'Login Succeeded' not in login_out.stdout"
 
     - name: confirm authfile present and non-empty
       stat:
