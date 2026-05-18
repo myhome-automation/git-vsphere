@@ -5,14 +5,14 @@
 # Run from the workstation. Idempotent: re-running pulls latest image
 # and restarts both containers.
 #
-# The image (quay.io/bpraisa/nginx:homelab-proxy-1.3) has the proxy
+# The image (quay.io/bpraisa/nginx:homelab-proxy-1.4) has the proxy
 # config baked in, so no host volume mount is needed. Override the
 # image via the IMAGE env var if you want a different version:
 #   IMAGE=quay.io/bpraisa/nginx:latest bash install.sh
 set -euo pipefail
 
 HOST="${1:-192.168.1.203}"
-IMAGE="${IMAGE:-quay.io/bpraisa/nginx:homelab-proxy-1.3}"
+IMAGE="${IMAGE:-quay.io/bpraisa/nginx:homelab-proxy-1.4}"
 
 ssh -o StrictHostKeyChecking=no "$HOST" "IMAGE='$IMAGE' bash -s" <<'REMOTE'
 set -e

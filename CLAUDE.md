@@ -47,10 +47,10 @@ Cross-cluster monitoring: Grafana at `http://192.168.1.181:30300` (admin / `chan
 Beyond the ESXi host, the home lab has expanded to two more boxes:
 
 - **`gdragon`** (workstation, 192.168.1.181, Rocky 9) — runs `k3s` (single-node), the cross-cluster monitoring stack, **HashiCorp Vault** (3-replica HA shape, `vault-0` is currently the active leader), ArgoCD, and is where ansible runs from. Local `/var` was grown to 128 GiB after a hot-added 100 GiB disk to fit the Vault + monitoring PVCs.
-- **`gdragon-ubuntu`** (192.168.1.203, Ubuntu 24.04) — edge / reverse proxy host. Runs **2 podman-rootless nginx containers** from `quay.io/bpraisa/nginx:homelab-proxy-1.3` (the custom image we build from `nginx-proxy/Dockerfile`); HA via two host-port bindings (`:80` and `:8080`) + `--restart=always`. Path-based routing to k3s/homelab services (`/grafana/`, `/prometheus/`, `/loki/`, `/vault/`, `/argocd/`). See `nginx-proxy/README.md`.
+- **`gdragon-ubuntu`** (192.168.1.203, Ubuntu 24.04) — edge / reverse proxy host. Runs **2 podman-rootless nginx containers** from `quay.io/bpraisa/nginx:homelab-proxy-1.4` (the custom image we build from `nginx-proxy/Dockerfile`); HA via two host-port bindings (`:80` and `:8080`) + `--restart=always`. Path-based routing to k3s/homelab services (`/grafana/`, `/prometheus/`, `/loki/`, `/vault/`, `/argocd/`). See `nginx-proxy/README.md`.
 - **ESXi 6.7** (192.168.1.174) — the original hypervisor; runs the 9 homelab VMs.
 
-Cross-machine deploy: `bash nginx-proxy/install.sh 192.168.1.203` (re-pulls + restarts the HA pair); `bash nginx-proxy/build-and-push.sh quay.io/bpraisa/nginx:homelab-proxy-1.3` (rebuild + push image — uses the robot creds in ansible-vault; bootstrap the login with `ansible-playbook ... playbooks/quay-login.yml`).
+Cross-machine deploy: `bash nginx-proxy/install.sh 192.168.1.203` (re-pulls + restarts the HA pair); `bash nginx-proxy/build-and-push.sh quay.io/bpraisa/nginx:homelab-proxy-1.4` (rebuild + push image — uses the robot creds in ansible-vault; bootstrap the login with `ansible-playbook ... playbooks/quay-login.yml`).
 
 ## Two load-balancer layers (different jobs)
 
@@ -71,15 +71,16 @@ Cross-machine deploy: `bash nginx-proxy/install.sh 192.168.1.203` (re-pulls + re
 | Promtail | both | DaemonSet | n/a | ships logs to local Loki, tagged `cluster=homelab` or `cluster=k3os-local` |
 | Prometheus (homelab) | homelab | ClusterIP | n/a | scrapes local + remote_writes to gdragon:30320 |
 
-**Sub-path mode status (verified 2026-05-18 with image `homelab-proxy-1.3`):** all six paths return 200 through the edge nginx at `http://192.168.1.203/`:
+**Sub-path mode status (verified 2026-05-18 with image `homelab-proxy-1.4`):** all paths below return 200 through the edge nginx at `http://192.168.1.203/`:
 - `/` → landing page
-- `/grafana/` → `/grafana/login` (configured via helm: `grafana.ini server.root_url=/grafana/` + `serve_from_sub_path=true`)
-- `/prometheus/` → `/prometheus/query` (configured via helm: `externalUrl=http://192.168.1.203/prometheus` + `routePrefix=/prometheus`)
-- `/loki/ready` (Loki has no UI; nginx strips `/loki/` since Loki's endpoints live at root)
-- `/argocd/` (configured via `argocd-cmd-params-cm` → `server.rootpath: /argocd`)
-- `/vault/v1/sys/health` and `/vault/` (nginx strips `/vault/` and rewrites response Location headers via `proxy_redirect ~^/(.*)$ /vault/$1`; Vault has no native sub-path support)
+- `/grafana/` → `/grafana/login` (helm: `grafana.ini server.root_url=/grafana/` + `serve_from_sub_path=true`)
+- `/prometheus/` → `/prometheus/query` (helm: `externalUrl=http://192.168.1.203/prometheus` + `routePrefix=/prometheus`)
+- `/loki/ready` (no UI; nginx strips `/loki/` since Loki's endpoints live at root)
+- `/argocd/` (`argocd-cmd-params-cm` → `server.rootpath: /argocd`)
+- `/ui/` (Vault SPA — Vault has no sub-path mode and its Ember app hard-codes `rootURL=/ui/`, so the UI is **root-mounted** at nginx and `/vault/` 302-redirects to `/ui/`. Assets at `/ui/assets/...` and API calls at `/v1/...` all forward to the `vault-active` upstream NodePort.)
+- `/v1/sys/...` (Vault API at root, same upstream as `/ui/`)
 
-Vault's SPA UI makes absolute fetches that escape the proxy mount — full UI use still needs the direct `vault-active` NodePort at `http://192.168.1.181:31326/ui/`. API calls (`/vault/v1/...`) work end-to-end through the proxy.
+This works because no other app in the lab uses `/ui/` or `/v1/` at the root; everything else is sub-path-mounted.
 
 ## Vault on local k3s (production-shape HA, ArgoCD-managed)
 
