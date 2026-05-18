@@ -1,0 +1,429 @@
+<mxfile host="app.diagrams.net" agent="git-vsphere/docs" version="24.0.0">
+  <diagram name="1. Physical topology" id="phys-topology">
+    <mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1169" pageHeight="826" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title-phys" value="Home Lab — Physical Topology" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=20;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="370" y="20" width="420" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="lan" value="LAN  192.168.1.0/24&#xa;Router / DHCP: 192.168.1.1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=12;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="60" y="80" width="1050" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="ext" value="Internet&#xa;github.com  •  quay.io  •  docker.io  •  helm registries" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="60" y="20" width="1050" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="ext-link" style="endArrow=classic;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="ext" target="lan">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="esxi" value="ESXi 6.7 — HP Z620&#xa;192.168.1.174&#xa;60 GB RAM, 16 vCPU&#xa;datastore1 (1.4 TB) + datastore2 (931 GB)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="60" y="170" width="340" height="380" as="geometry" />
+        </mxCell>
+        <mxCell id="vmL" value="lb1 .188 MASTER&#xa;HAProxy + keepalived + dnsmasq&#xa;VIP 192.168.1.50" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="80" y="210" width="300" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="vmL2" value="lb2 .185 BACKUP&#xa;HAProxy + keepalived + dnsmasq" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="80" y="265" width="300" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="vmM" value="kmaster1 .186  •  kmaster2 .189  •  kmaster3 .187&#xa;k8s 1.36 control plane (3-node HA)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="80" y="310" width="300" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="vmW" value="kworker1 .182  •  kworker2 .183  •  kworker3 .184&#xa;k8s 1.36 workers" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="80" y="365" width="300" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="vmV" value="vault-server .202&#xa;source / template VM (kept LIVE for cloning)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="80" y="420" width="300" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="esxi-note" value="9 Rocky-9.7 VMs.  Calico v3.30, Istio 1.27.&#xa;pod CIDR 10.0.0.0/16.  Service CIDR 10.96.0.0/12." style="text;html=1;strokeColor=none;fillColor=none;fontSize=9;align=left;" vertex="1" parent="1">
+          <mxGeometry x="80" y="470" width="300" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="esxi-link" style="endArrow=classic;html=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.2;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="1" source="esxi" target="lan">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="gdragon" value="gdragon (workstation) — Rocky 9&#xa;192.168.1.181&#xa;k3s 1.34 single-node (Calico CNI)&#xa;/var hot-grown to 128 GiB" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="420" y="170" width="340" height="380" as="geometry" />
+        </mxCell>
+        <mxCell id="gns-mon" value="namespace: monitoring&#xa;Grafana :30300  •  Prometheus :30320&#xa;Loki :30310  •  Alertmanager  •  KSM  •  node-exporter  •  Promtail" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="440" y="210" width="300" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="gns-vault" value="namespace: vault (helm via ArgoCD)&#xa;vault-0 (LEADER, unsealed)  •  vault-2 (joined)&#xa;vault-1 (CrashLoopBackOff — IPPool overlap)&#xa;Services: vault :30200  •  vault-active :31326 (leader-only)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="440" y="275" width="300" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="gns-argo" value="namespace: argocd&#xa;server :30401 (http) / :30400 (https)&#xa;rootpath = /argocd&#xa;Reconciles from github.com/myhome-automation/git-vsphere" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="440" y="355" width="300" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="gns-cni" value="calico-system / calico-apiserver / tigera-operator / kube-system" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="440" y="430" width="300" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="gd-warn" value="⚠ Calico IPPool 192.168.0.0/16 overlaps with home LAN 192.168.1.0/24" style="text;html=1;strokeColor=none;fillColor=none;fontSize=9;align=left;fontStyle=2;" vertex="1" parent="1">
+          <mxGeometry x="440" y="465" width="300" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="gdragon-link" style="endArrow=classic;html=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="1" source="gdragon" target="lan">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="ubuntu" value="gdragon-ubuntu (edge proxy) — Ubuntu 24.04&#xa;192.168.1.203&#xa;podman rootless" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="780" y="170" width="330" height="380" as="geometry" />
+        </mxCell>
+        <mxCell id="ngx1" value="nginx-1   :80&#xa;quay.io/bpraisa/nginx:homelab-proxy-1.4" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="800" y="210" width="290" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="ngx2" value="nginx-2   :8080&#xa;same image (port-based HA)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="800" y="265" width="290" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="paths" value="Path-based reverse proxy:&#xa;/grafana/   → gdragon:30300&#xa;/prometheus/ → gdragon:30320&#xa;/loki/      → gdragon:30310&#xa;/ui/  /v1/  → gdragon:31326   (Vault, root-mounted)&#xa;/vault/  →  302  →  /ui/&#xa;/argocd/    → gdragon:30401&#xa;/           → static landing" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=9;align=left;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="800" y="310" width="290" height="135" as="geometry" />
+        </mxCell>
+        <mxCell id="ubuntu-link" style="endArrow=classic;html=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.8;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="1" source="ubuntu" target="lan">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="legend-phys" value="Legend (this page) — fill colour groups hosts/roles by physical box.&#xa;Blue: ESXi-hosted infra • Green: LBs and workstation k3s • Yellow: k8s control plane / monitoring • Orange: workers • Red: Vault • Purple: edge / proxy / external." style="text;html=1;strokeColor=none;fillColor=none;fontSize=9;align=left;" vertex="1" parent="1">
+          <mxGeometry x="60" y="570" width="1050" height="40" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram name="2. Cluster / namespace view" id="cluster-view">
+    <mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1169" pageHeight="826" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title2" value="Cluster / Namespace View — homelab + k3os-local" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=20;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="290" y="20" width="580" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="homelab" value="kubeconfig context: homelab&#xa;k8s 1.36.1 — 3 masters + 3 workers&#xa;CNI: Calico v3.30.4 (pod CIDR 10.0.0.0/16)&#xa;Mesh: Istio 1.27.2" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=12;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="60" y="80" width="520" height="700" as="geometry" />
+        </mxCell>
+        <mxCell id="hl-kube" value="kube-system&#xa;kube-apiserver / scheduler / controller-manager (×3 each)&#xa;coredns • kube-proxy DS" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;align=left;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="80" y="120" width="480" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="hl-calico" value="calico-system / calico-apiserver / tigera-operator&#xa;calico-node DS • calico-typha • calico-kube-controllers&#xa;BGP TCP/179 + VXLAN UDP/4789 between nodes" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;align=left;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="80" y="195" width="480" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="hl-istio" value="istio-system&#xa;istiod • istio-ingressgateway (Service LoadBalancer pending)&#xa;Sidecar injection enabled on default namespace" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;align=left;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="80" y="280" width="480" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="hl-mon" value="monitoring&#xa;kube-prometheus-stack (Prometheus only — no Grafana/AM here)&#xa;remote_write → gdragon:30320 with cluster=homelab&#xa;Promtail DS (6 nodes) → gdragon:30310" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;align=left;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="80" y="355" width="480" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="hl-extern" value="Externally exposed&#xa;kube-apiserver via HAProxy VIP   https://192.168.1.50:6443&#xa;dnsmasq via same VIP            udp/tcp :53&#xa;HTTP/HTTPS ingress (planned)    VIP :80/:443 → kworker NodePorts" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=10;align=left;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="80" y="450" width="480" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="hl-status" value="Status (2026-05-18): all 6 nodes Ready, calico healthy, APIService True." style="text;html=1;strokeColor=none;fillColor=none;fontSize=9;align=left;fontStyle=2;" vertex="1" parent="1">
+          <mxGeometry x="80" y="540" width="480" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="k3os" value="kubeconfig context: k3os-local&#xa;k3s 1.34.3 — single node (gdragon, .181)&#xa;CNI: Calico (IPPool 192.168.0.0/16 ⚠ overlaps LAN)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="600" y="80" width="510" height="700" as="geometry" />
+        </mxCell>
+        <mxCell id="k-kube" value="kube-system&#xa;k3s collapses cp/sched/cm/proxy/etcd into one binary&#xa;traefik (default ingress) — currently unused" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;align=left;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="620" y="120" width="470" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="k-mon" value="monitoring&#xa;Grafana :30300 (admin / changeme-home-lab)&#xa;Prometheus :30320 (remote_write receiver from homelab)&#xa;Loki :30310 (push API)  •  Alertmanager  •  KSM  •  node-exporter  •  Promtail DS&#xa;sub-path mode enabled (root_url=/grafana/, routePrefix=/prometheus)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;align=left;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="620" y="195" width="470" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="k-vault" value="vault   (Helm 0.31.0, image hashicorp/vault:1.20.4)&#xa;3-replica StatefulSet, raft storage&#xa;Services:  vault :30200 (any)  •  vault-active :31326 (leader)&#xa;Liveness probe path: ?standbyok=true&amp;sealedcode=204&amp;uninitcode=204&#xa;Vault-0 unsealed LEADER • Vault-2 joined • Vault-1 CLBO (IPPool)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=10;align=left;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="620" y="320" width="470" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="k-argo" value="argocd&#xa;argocd-server :30401 (http) / :30400 (https)&#xa;rootpath = /argocd (in argocd-cmd-params-cm)&#xa;Reconciles: vault Application + app-of-apps (manifests in this git repo)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;align=left;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="620" y="455" width="470" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="k-calico" value="calico-system / calico-apiserver / tigera-operator&#xa;IPPool 192.168.0.0/16 — overlap workaround:&#xa;systemd unit k3s-pod-masq.service masquerades pod→external" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;align=left;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="620" y="560" width="470" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="k-storage" value="storage: local-path PVC provisioner (k3s default)&#xa;PVCs live on hot-added 100GiB → /var (xfs)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=10;align=left;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="620" y="655" width="470" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="hub" value="Cross-cluster link&#xa;homelab → k3os-local for metrics &amp; logs&#xa;(see &quot;3. Monitoring data flow&quot;)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="450" y="745" width="270" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="hub-l1" style="endArrow=classic;html=1;dashed=1;" edge="1" parent="1" source="hl-mon" target="hub">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="hub-l2" style="endArrow=classic;html=1;dashed=1;" edge="1" parent="1" source="k-mon" target="hub">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram name="3. User request flow" id="request-flow">
+    <mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1169" pageHeight="826" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title3" value="User Request Flow — Browser → Edge Proxy → App" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=20;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="290" y="20" width="580" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="browser" value="User browser&#xa;http://192.168.1.203/..." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="60" y="380" width="220" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="nginx" value="nginx-1 / nginx-2  (.203)&#xa;quay.io/bpraisa/nginx:homelab-proxy-1.4&#xa;Path-based reverse proxy" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="380" y="80" width="380" height="660" as="geometry" />
+        </mxCell>
+        <mxCell id="loc-graf" value="/grafana/" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="400" y="120" width="120" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="loc-prom" value="/prometheus/" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="400" y="200" width="120" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="loc-loki" value="/loki/" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="400" y="280" width="120" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="loc-vault" value="/ui/   /v1/&#xa;(Vault, root-mount)&#xa;/vault/ → 302 → /ui/" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="400" y="360" width="120" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="loc-argo" value="/argocd/" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="400" y="460" width="120" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="loc-land" value="/  (landing)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="400" y="540" width="120" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="up-graf" value="kps-grafana&#xa;ClusterIP→NodePort 30300&#xa;Grafana 11" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="800" y="120" width="310" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="up-prom" value="prometheus-kps-prometheus-0&#xa;NodePort 30320 (Prometheus)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="800" y="200" width="310" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="up-loki" value="loki-0&#xa;NodePort 30310 (Loki)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="800" y="280" width="310" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="up-vault" value="vault-active Service (leader-only)&#xa;NodePort 31326 → Pod vault-0&#xa;Hashicorp Vault 1.20.4" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="800" y="360" width="310" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="up-argo" value="argocd-server&#xa;NodePort 30401 (http) — rootpath /argocd&#xa;ArgoCD 2.x" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="800" y="460" width="310" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="up-land" value="static landing HTML&#xa;(served by nginx itself; no upstream)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="800" y="540" width="310" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="e-b1" style="endArrow=classic;html=1;" edge="1" parent="1" source="browser" target="loc-graf">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-b2" style="endArrow=classic;html=1;" edge="1" parent="1" source="browser" target="loc-vault">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-b3" style="endArrow=classic;html=1;" edge="1" parent="1" source="browser" target="loc-land">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-g" style="endArrow=classic;html=1;" edge="1" parent="1" source="loc-graf" target="up-graf">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-p" style="endArrow=classic;html=1;" edge="1" parent="1" source="loc-prom" target="up-prom">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-l" style="endArrow=classic;html=1;" edge="1" parent="1" source="loc-loki" target="up-loki">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-v" style="endArrow=classic;html=1;" edge="1" parent="1" source="loc-vault" target="up-vault">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-a" style="endArrow=classic;html=1;" edge="1" parent="1" source="loc-argo" target="up-argo">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-ld" style="endArrow=classic;html=1;" edge="1" parent="1" source="loc-land" target="up-land">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="legend3" value="Sub-path config per app&#xa;Grafana (helm): grafana.ini server.root_url=/grafana/ + serve_from_sub_path=true&#xa;Prometheus (helm): externalUrl=http://192.168.1.203/prometheus + routePrefix=/prometheus&#xa;Loki: no app config — nginx strips /loki/ (Loki endpoints already live at root)&#xa;ArgoCD: argocd-cmd-params-cm server.rootpath=/argocd&#xa;Vault: NO native sub-path mode — UI is hard-coded to rootURL=/ui/, so we expose /ui/ and /v1/ at nginx root. /vault/ 302-redirects to /ui/ for back-compat.&#xa;&#xa;kubectl from workstation goes a different path: → https://192.168.1.50:6443 (keepalived VIP on lb1/lb2) → HAProxy → kmaster1/2/3:6443" style="text;html=1;strokeColor=none;fillColor=none;fontSize=9;align=left;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="60" y="490" width="320" height="250" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram name="4. Monitoring data flow" id="monitoring-flow">
+    <mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1169" pageHeight="826" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title4" value="Monitoring Data Flow — homelab → k3os-local" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=20;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="310" y="20" width="540" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="hl-cluster" value="homelab cluster (6 nodes)&#xa;CIDR 192.168.1.0/24 • pod CIDR 10.0.0.0/16" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=11;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="60" y="80" width="450" height="700" as="geometry" />
+        </mxCell>
+        <mxCell id="hl-prom" value="homelab Prometheus&#xa;(in-cluster ClusterIP)&#xa;externalLabels: cluster=homelab&#xa;Scrapes: kube-apiserver, kubelet,&#xa;node-exporter, kube-state-metrics, etc." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="80" y="140" width="270" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="hl-promtail" value="homelab Promtail DaemonSet&#xa;runs on every k8s node (6)&#xa;reads /var/log/* + container logs&#xa;labels: cluster=homelab" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="80" y="300" width="270" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="hl-targets" value="Local scrape targets&#xa;kube-state-metrics • node-exporter&#xa;coredns • etcd • apiserver • kubelet" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=9;align=left;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="80" y="440" width="270" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="hl-targets-arrow" style="endArrow=classic;html=1;" edge="1" parent="1" source="hl-targets" target="hl-prom">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="hl-logs" value="container + system logs on every node" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=9;align=left;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="80" y="520" width="270" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="hl-logs-arrow" style="endArrow=classic;html=1;" edge="1" parent="1" source="hl-logs" target="hl-promtail">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="k-cluster" value="k3os-local cluster (single-node, .181)&#xa;The &quot;search head&quot; for both clusters" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="650" y="80" width="460" height="700" as="geometry" />
+        </mxCell>
+        <mxCell id="k-prom" value="kps-prometheus-0  NodePort :30320&#xa;enableRemoteWriteReceiver = true&#xa;externalLabels: cluster=k3os-local&#xa;retention 7d / 8 GiB local-path PVC" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="670" y="140" width="420" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="k-loki" value="loki-0  NodePort :30310&#xa;single-binary, filesystem-backed&#xa;push API at /loki/api/v1/push" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="670" y="300" width="420" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="k-graf" value="kps-grafana   NodePort :30300&#xa;datasources:&#xa;   - Prometheus  http://kps-prometheus.monitoring.svc:9090&#xa;   - Loki        http://loki.monitoring.svc:3100&#xa;sub-path enabled at /grafana/" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=10;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="670" y="440" width="420" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="user-monitoring" value="User browser&#xa;http://192.168.1.203/grafana/" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="800" y="640" width="220" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="user-monitoring-arrow" style="endArrow=classic;html=1;" edge="1" parent="1" source="user-monitoring" target="k-graf">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="rw-arrow" value="Prometheus remote_write&#xa;HTTP POST /api/v1/write&#xa;samples labelled cluster=homelab" style="endArrow=classic;html=1;strokeColor=#d6b656;strokeWidth=2;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;fontSize=9;" edge="1" parent="1" source="hl-prom" target="k-prom">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="430" y="190" />
+              <mxPoint x="610" y="190" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="loki-arrow" value="Promtail HTTP push&#xa;POST /loki/api/v1/push&#xa;streams labelled cluster=homelab" style="endArrow=classic;html=1;strokeColor=#82b366;strokeWidth=2;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;fontSize=9;" edge="1" parent="1" source="hl-promtail" target="k-loki">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="430" y="340" />
+              <mxPoint x="610" y="340" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="graf-prom-arrow" value="" style="endArrow=classic;html=1;dashed=1;" edge="1" parent="1" source="k-graf" target="k-prom">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="graf-loki-arrow" value="" style="endArrow=classic;html=1;dashed=1;" edge="1" parent="1" source="k-graf" target="k-loki">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="legend4" value="Why the cross-cluster shape: only the workstation has the disk to retain real-time metrics + logs. Homelab Prometheus just scrapes locally and ships everything west. Grafana on the workstation queries both data sources (each tagged with `cluster=` so dashboards can split). Failure modes: if .181 dies, metrics stop being received but homelab apps run fine; homelab Prometheus' write-ahead-log buffers ~12 h before remote_write quietly drops samples." style="text;html=1;strokeColor=none;fillColor=none;fontSize=9;align=left;" vertex="1" parent="1">
+          <mxGeometry x="60" y="595" width="580" height="160" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram name="5. Image / registry flow" id="image-flow">
+    <mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1169" pageHeight="826" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title5" value="Image / Registry Flow — where every container actually comes from" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=20;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="220" y="20" width="720" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="quay" value="quay.io  (Red Hat hosted)&#xa;quay.io/bpraisa/nginx:homelab-proxy-1.0…1.4&#xa;quay.io/bpraisa/vault:1.20.4 + :latest&#xa;quay.io/argoproj/argocd:*" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fad7ac;strokeColor=#b46504;fontSize=11;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="60" y="100" width="340" height="160" as="geometry" />
+        </mxCell>
+        <mxCell id="dh" value="docker.io  (Docker Hub)&#xa;docker.io/hashicorp/vault:1.20.4 &lt;-- chart default&#xa;docker.io/grafana/grafana&#xa;docker.io/grafana/loki&#xa;docker.io/prom/prometheus&#xa;docker.io/calico/* etc." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="420" y="100" width="340" height="160" as="geometry" />
+        </mxCell>
+        <mxCell id="helm" value="helm chart repos&#xa;https://prometheus-community.github.io/helm-charts&#xa;https://grafana.github.io/helm-charts&#xa;https://helm.releases.hashicorp.com&#xa;Argo project charts" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="780" y="100" width="330" height="160" as="geometry" />
+        </mxCell>
+        <mxCell id="cons1" value="gdragon-ubuntu (.203) — podman&#xa;nginx-1, nginx-2&#xa;PULLS quay.io/bpraisa/nginx:homelab-proxy-1.4" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="60" y="350" width="340" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="cons2" value="local-k3s (.181) — containerd&#xa;Vault pods (currently from dockerhub; quay mirror exists)&#xa;Grafana/Prom/Loki, ArgoCD pods (per helm-chart defaults)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="420" y="350" width="340" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="cons3" value="homelab k8s — containerd&#xa;Calico, Istio, monitoring (kps), Promtail&#xa;Per helm-chart defaults; passes through if behind corp proxy" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=10;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="780" y="350" width="330" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="builder" value="Build &amp; push pipeline (manual)&#xa;1. Edit nginx-proxy/Dockerfile + nginx.conf&#xa;2. scp to .203, podman build there&#xa;3. podman push (authfile from quay-login.yml)&#xa;4. Bump tag in nginx-proxy/install.sh&#xa;5. install.sh re-pulls and rotates containers" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=10;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="60" y="500" width="500" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="mirror" value="Mirror flow (e.g. Vault)&#xa;1. podman pull docker.io/hashicorp/vault:1.20.4&#xa;2. podman tag → quay.io/bpraisa/vault:1.20.4 + :latest&#xa;3. podman push --authfile auth.json&#xa;Gotcha (2026-05-18): brand-new quay repos&#xa;need explicit robot Write permission first" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=10;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="600" y="500" width="510" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="auth" value="Credentials path&#xa;ansible-vault: group_vars/all/vault.yml → vault_quay_username + vault_quay_password&#xa;Bootstrap: ansible-playbook playbooks/quay-login.yml (idempotent)&#xa;Result: persistent auth.json at ~/.config/containers/auth.json on .203" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="60" y="670" width="1050" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="i-q-c1" style="endArrow=classic;html=1;strokeColor=#b46504;" edge="1" parent="1" source="quay" target="cons1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="i-q-c2" style="endArrow=classic;html=1;strokeColor=#b46504;dashed=1;" edge="1" parent="1" source="quay" target="cons2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="i-d-c2" style="endArrow=classic;html=1;strokeColor=#6c8ebf;" edge="1" parent="1" source="dh" target="cons2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="i-d-c3" style="endArrow=classic;html=1;strokeColor=#6c8ebf;" edge="1" parent="1" source="dh" target="cons3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="i-h-c2" style="endArrow=classic;html=1;strokeColor=#9673a6;" edge="1" parent="1" source="helm" target="cons2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="i-h-c3" style="endArrow=classic;html=1;strokeColor=#9673a6;" edge="1" parent="1" source="helm" target="cons3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="i-b-q" value="build → push" style="endArrow=classic;html=1;strokeColor=#b85450;dashed=1;" edge="1" parent="1" source="builder" target="quay">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="i-m-q" value="mirror" style="endArrow=classic;html=1;strokeColor=#b85450;dashed=1;" edge="1" parent="1" source="mirror" target="quay">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram name="6. Vault stack detail" id="vault-detail">
+    <mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1169" pageHeight="826" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title6" value="Vault Stack — HA shape on k3os-local" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=20;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="340" y="20" width="480" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="ns" value="Namespace: vault   (k3os-local, on gdragon .181)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=12;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="60" y="80" width="1050" height="600" as="geometry" />
+        </mxCell>
+        <mxCell id="argo" value="ArgoCD Application: argocd/vault.yaml&#xa;chart hashicorp/vault 0.31.0&#xa;auto-sync (prune + self-heal)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="80" y="120" width="380" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="sts" value="StatefulSet vault (replicas: 3)&#xa;Image: hashicorp/vault:1.20.4&#xa;Liveness path: /v1/sys/health?standbyok=true&amp;sealedcode=204&amp;uninitcode=204&#xa;Readiness path: /v1/sys/health?standbyok=true&amp;sealedcode=204&amp;uninitcode=204" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="480" y="120" width="610" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="vault0" value="vault-0  ● LEADER&#xa;Sealed: false  •  HA Mode: active&#xa;Raft Applied Index: ↑&#xa;PVCs: data-vault-0 (5Gi) + audit-vault-0 (2Gi)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="80" y="230" width="320" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="vault2" value="vault-2  ● joined follower&#xa;Sealed: false (after unseal)&#xa;HA Mode: standby&#xa;PVCs: data-vault-2 + audit-vault-2" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="420" y="230" width="320" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="vault1" value="vault-1  ✗ CrashLoopBackOff&#xa;Sealed: (can't get that far)&#xa;Calico IPPool 192.168.0.0/16 ∩ LAN&#xa;blocks this pod's IP — can't reach&#xa;vault-0 on TCP/8201 for raft" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=10;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="760" y="230" width="320" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="svc-vault" value="Service vault    (selector: any pod)&#xa;NodePort 30200 → 8200&#xa;⚠ load-balances over sealed pods too — don't use for direct UI" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fad7ac;strokeColor=#b46504;fontSize=10;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="80" y="380" width="320" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="svc-active" value="Service vault-active   (selector: active raft leader only)&#xa;NodePort 31326 → 8200&#xa;✓ what the edge nginx upstream points at&#xa;✓ what users should hit directly" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="420" y="380" width="320" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="svc-standby" value="Service vault-standby   (followers)&#xa;NodePort 32012 → 8200&#xa;Rarely used; mostly for HA gossip" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="760" y="380" width="320" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="auth-paths" value="Authentication mounts (after init+unseal)&#xa;• Token   (root token from ~/.vault/init.json)&#xa;• AppRole (approle/role/&lt;role-name&gt;)&#xa;Secret backends&#xa;• KV-v2 at secret/" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="80" y="480" width="500" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="init" value="One-time init + unseal artifact&#xa;~/.vault/init.json on gdragon (chmod 600)&#xa;5 unseal keys, threshold 3 + root token&#xa;⚠ should be moved to a password manager and wiped from disk" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=10;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="600" y="480" width="480" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="argo-sts" style="endArrow=classic;html=1;" edge="1" parent="1" source="argo" target="sts">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="sts-v0" style="endArrow=classic;html=1;dashed=1;" edge="1" parent="1" source="sts" target="vault0">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="sts-v2" style="endArrow=classic;html=1;dashed=1;" edge="1" parent="1" source="sts" target="vault2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="sts-v1" style="endArrow=classic;html=1;dashed=1;" edge="1" parent="1" source="sts" target="vault1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="vactive-v0" style="endArrow=classic;html=1;strokeColor=#82b366;strokeWidth=2;" edge="1" parent="1" source="svc-active" target="vault0">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="info" value="Recovery cheatsheet&#xa;1.  kubectl --context k3os-local -n vault exec vault-0 -- vault status&#xa;     → expect Sealed:true after every restart&#xa;2.  for r in vault-0 vault-1 vault-2; do&#xa;        jq -r '.unseal_keys_b64[:3][]' ~/.vault/init.json | while read k; do&#xa;          kubectl --context k3os-local -n vault exec $r -- vault operator unseal &quot;$k&quot;; done&#xa;     done&#xa;3.  Confirm Service vault-active has a single endpoint pointing at vault-0." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=9;verticalAlign=top;align=left;" vertex="1" parent="1">
+          <mxGeometry x="80" y="610" width="1000" height="60" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

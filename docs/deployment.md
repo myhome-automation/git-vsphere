@@ -191,3 +191,94 @@ ssh ansible@lb1 'sudo systemctl start keepalived'              # VIP returns
 | `cluster_powerup.yml`: all `power.on` calls succeed at the playbook level but every VM stays `Powered off`; hostd.log says "State Transition not allowed" | ESXi host is in maintenance mode (sometimes set automatically after a dirty shutdown) | `ssh root@192.168.1.174 'vim-cmd hostsvc/maintenance_mode_exit'`. See [operations.md](operations.md) "Powerup that succeeds but leaves all VMs off". |
 
 Full per-component breakdowns under `docs/` — see [README.md](README.md).
+
+---
+
+## 8. Deploying the local-k3s side (workstation + edge proxy)
+
+The deployment runbook above covers the **homelab** vsphere cluster only.
+The other two physical hosts (workstation `gdragon` on .181 running k3s,
+and `gdragon-ubuntu` on .203 running the edge nginx proxy) are deployed
+separately. The end-to-end stack is documented across:
+
+| File | Covers |
+|------|--------|
+| `monitoring/README.md` | kube-prometheus-stack + loki-stack on local k3s, including the sub-path config that makes `/grafana/` and `/prometheus/` work through the edge proxy. |
+| `argocd/vault.yaml` | ArgoCD Application for Vault (helm chart 0.31.0, HA shape) — `kubectl --context k3os-local apply -f argocd/vault.yaml`. |
+| `vault/README.md` | Initial init + unseal procedure (one-time after fresh install). |
+| `nginx-proxy/README.md` + `nginx-proxy/install.sh` | Edge proxy deploy. `bash nginx-proxy/install.sh 192.168.1.203` re-pulls the image from `quay.io/bpraisa/nginx:homelab-proxy-1.4` and recreates both rootless podman containers. |
+| `ansible/playbooks/quay-login.yml` | One-time-per-host bootstrap of persistent `auth.json` for podman → quay.io. Required before the first push from .203. |
+
+### 8.1 Edge proxy bootstrap (fresh .203)
+
+```bash
+# 1. Persist quay.io robot credentials at ~/.config/containers/auth.json on .203
+ansible-playbook -i ansible/inventory/hosts.ini --vault-password-file=ansible/.vault_pass \
+  ansible/playbooks/quay-login.yml
+
+# 2. Deploy both containers (idempotent — also pulls latest image)
+bash nginx-proxy/install.sh 192.168.1.203
+
+# 3. Verify all six paths return 200
+for p in / /grafana/ /prometheus/ /loki/ready /ui/ /argocd/ /v1/sys/health; do
+  printf "%-22s %s\n" "$p" \
+    "$(curl -sSL -o /dev/null -w '%{http_code}' http://192.168.1.203$p)"
+done
+```
+
+### 8.2 Monitoring stack on local k3s (fresh install)
+
+```bash
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo add grafana https://grafana.github.io/helm-charts
+helm repo update
+
+helm --kube-context k3os-local upgrade --install kps \
+  prometheus-community/kube-prometheus-stack \
+  -n monitoring --create-namespace \
+  -f monitoring/local-k3s/kube-prometheus-stack-values.yaml
+
+helm --kube-context k3os-local upgrade --install loki \
+  grafana/loki-stack \
+  -n monitoring \
+  -f monitoring/local-k3s/loki-stack-values.yaml
+```
+
+The values files already include the sub-path config — `serve_from_sub_path`
+for Grafana, `externalUrl`+`routePrefix` for Prometheus — so the edge proxy
+URLs work the moment the rollout finishes.
+
+### 8.3 Vault on local k3s (fresh install)
+
+```bash
+kubectl --context k3os-local apply -f argocd/vault.yaml
+# ArgoCD reconciles → StatefulSet appears → all 3 pods Running but SEALED
+# (liveness probe tolerates sealed state, so they stay up indefinitely)
+
+# Init once (vault-0 is leader)
+kubectl --context k3os-local -n vault exec vault-0 -- vault operator init \
+  -key-shares=5 -key-threshold=3 -format=json > ~/.vault/init.json
+chmod 600 ~/.vault/init.json
+
+# Unseal vault-0 (and any other pods that came up)
+for r in vault-0 vault-1 vault-2; do
+  jq -r '.unseal_keys_b64[:3][]' ~/.vault/init.json | while read key; do
+    kubectl --context k3os-local -n vault exec $r -- \
+      vault operator unseal "$key" 2>/dev/null || true
+  done
+done
+
+# vault-1 will likely CrashLoopBackOff on this k3s because of the
+# Calico IPPool 192.168.0.0/16 ∩ 192.168.1.0/24 overlap — see vault/README.md
+```
+
+### 8.4 ArgoCD sub-path mode (if not already set)
+
+```bash
+kubectl --context k3os-local -n argocd patch configmap argocd-cmd-params-cm \
+  --type merge -p '{"data":{"server.rootpath":"/argocd"}}'
+kubectl --context k3os-local -n argocd rollout restart deployment/argocd-server
+```
+
+That makes `http://192.168.1.181:30401/argocd/` and `http://192.168.1.203/argocd/`
+both serve the UI correctly.

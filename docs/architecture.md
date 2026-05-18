@@ -45,10 +45,21 @@ State as of 2026-05-17. Spans **three physical machines** plus 9 VMs:
 ## Full deployment topology (network + load-balancers + apps)
 
 The complete picture from a user's browser to a pod, across all three
-physical machines:
+physical machines, plus the external image registry and git remote.
 
 ```
-   ┌─────────────────────────────────────────────────────────────────────────┐
+   ┌──────────────────────────┐       ┌─────────────────────────────────────┐
+   │  External (internet)     │       │  EXTERNAL DEPENDENCIES (read-only)  │
+   │   - github.com           │       │   - quay.io/bpraisa/nginx           │
+   │   - quay.io              │◄──────│      :homelab-proxy-1.4 (edge img)  │
+   │   - dockerhub            │       │   - quay.io/bpraisa/vault           │
+   │   - helm chart repos     │       │      :1.20.4 (mirror; helm currently│
+   └──────────────────────────┘       │      still pulls from dockerhub)    │
+                ▲                     │   - github.com/myhome-automation    │
+                │ image pulls,        │      /git-vsphere (this repo)       │
+                │ git pulls           └─────────────────────────────────────┘
+                │
+   ┌────────────┴────────────────────────────────────────────────────────────┐
    │                       LAN  192.168.1.0/24                               │
    │                       Router: 192.168.1.1 (DHCP)                        │
    └─────────────────┬──────────────────────────────────┬────────────────────┘
@@ -59,33 +70,34 @@ physical machines:
    ║  Ubuntu 24.04 — EDGE / REVERSE PROXY║   ║  HP Z620, 60 GB RAM           ║
    ║                                     ║   ║                               ║
    ║  podman rootless                    ║   ║  9 VMs (homelab cluster):     ║
-   ║   ┌─ nginx-1 :80 ┐  ┌─ nginx-2 :8080│   ║                               ║
-   ║   │  same image  │  │  same image   │   ║  vault-server  .202           ║
-   ║   │  HA via 2nd  │  │  port if 80   │   ║  ╔═══════════════════════════╗║
-   ║   │  port + auto │  │  is wedged    │   ║  ║  HA LB pair (homelab)     ║║
-   ║   │  restart     │  │               │   ║  ║  lb1 .188  MASTER  prio101║║
-   ║   └──────┬───────┘  └──────┬────────┘   ║  ║  lb2 .185  BACKUP  prio100║║
-   ║          │                 │            ║  ║   ├─ keepalived → VIP .50 ║║
-   ║          │ path-based      │            ║  ║   ├─ HAProxy   :6443      ║║
-   ║          │ reverse proxy   │            ║  ║   │            :80/:443   ║║
-   ║          ▼                 ▼            ║  ║   └─ dnsmasq   :53        ║║
+   ║  image: quay.io/bpraisa/nginx       ║   ║                               ║
+   ║         :homelab-proxy-1.4          ║   ║  vault-server  .202 (source) ║
+   ║                                     ║   ║  ╔═══════════════════════════╗║
+   ║   ┌─ nginx-1 :80 ┐  ┌─ nginx-2:8080│   ║  ║  HA LB pair (homelab)     ║║
+   ║   │  HA via 2nd  │  │  port if 80   │   ║  ║  lb1 .188  MASTER  prio101║║
+   ║   │  restart=    │  │  is wedged    │   ║  ║  lb2 .185  BACKUP  prio100║║
+   ║   │  always      │  │               │   ║  ║   ├─ keepalived → VIP .50 ║║
+   ║   └──────┬───────┘  └──────┬────────┘   ║  ║   ├─ HAProxy   :6443      ║║
+   ║          │                 │            ║  ║   │            :80/:443   ║║
+   ║          ▼ path-based reverse proxy ▼   ║  ║   └─ dnsmasq   :53        ║║
    ║   /grafana/    → gdragon:30300          ║  ║                            ║║
    ║   /prometheus/ → gdragon:30320          ║  ║   k8s 1.36 control plane: ║║
    ║   /loki/       → gdragon:30310          ║  ║   kmaster1 .186           ║║
-   ║   /vault/      → gdragon:30200          ║  ║   kmaster2 .189           ║║
-   ║   /argocd/     → gdragon:30401          ║  ║   kmaster3 .187           ║║
-   ║   /            → static landing page    ║  ║                            ║║
-   ╚═══════════════════════════╤═════════════╝  ║   k8s 1.36 workers:       ║║
-                               │                ║   kworker1 .182           ║║
-                               │                ║   kworker2 .183           ║║
-                               ▼                ║   kworker3 .184           ║║
+   ║   /ui/  /v1/   → gdragon:31326          ║  ║   kmaster2 .189           ║║
+   ║      (Vault, root-mounted; no sub-path) ║  ║   kmaster3 .187           ║║
+   ║   /vault/ → 302 → /ui/                  ║  ║                            ║║
+   ║   /argocd/     → gdragon:30401          ║  ║   k8s 1.36 workers:       ║║
+   ║   /            → static landing page    ║  ║   kworker1 .182           ║║
+   ╚═══════════════════════════╤═════════════╝  ║   kworker2 .183           ║║
+                               │                ║   kworker3 .184           ║║
+                               ▼                ║                            ║║
    ╔══════════════════════════════════════════╗ ╚════════════╤══════════════╝║
    ║  gdragon  (192.168.1.181)                ║              │                ║
    ║  Rocky 9 — WORKSTATION + LOCAL K3S       ║              │                ║
-   ║                                          ║              │                ║
-   ║  k3s 1.34 (single-node, Calico CNI)      ║◄─────────────┘                ║
-   ║                                          ║   Prometheus remote_write     ║
-   ║  monitoring namespace:                   ║   Promtail HTTP push          ║
+   ║                                          ║              │ monitoring:    ║
+   ║  k3s 1.34 (single-node, Calico CNI)      ║◄─────────────┘ Prometheus     ║
+   ║                                          ║                remote_write   ║
+   ║  monitoring namespace:                   ║                Promtail push  ║
    ║   ┌─────────────────────────────────────┐║   (cluster=homelab label)     ║
    ║   │ Grafana (the "search head")  :30300 │║                               ║
    ║   │ Prometheus     :30320 (RW receiver) │║                               ║
@@ -98,26 +110,30 @@ physical machines:
    ║                                          ║                               ║
    ║  vault namespace (HA shape, ArgoCD):     ║                               ║
    ║   ┌─────────────────────────────────────┐║                               ║
-   ║   │ vault-0  CrashLoopBackOff ⚠         │║                               ║
-   ║   │ vault-1  CrashLoopBackOff ⚠         │║                               ║
-   ║   │ vault-2  CrashLoopBackOff ⚠         │║                               ║
-   ║   │ NodePort :30200 → UI/API (503)      │║                               ║
-   ║   │ KV-v2 at `secret/`  (when up)       │║                               ║
-   ║   │ AppRole auth enabled (when up)      │║                               ║
-   ║   │ liveness probe kills sealed pod     │║                               ║
-   ║   │ before unseal can land — blocked    │║                               ║
-   ║   │ by Calico IPPool overlap            │║                               ║
+   ║   │ vault-0  Running, unsealed (LEADER) │║                               ║
+   ║   │ vault-2  Running, raft-joined       │║                               ║
+   ║   │ vault-1  CrashLoopBackOff (IPPool)  │║                               ║
+   ║   │ Services:                           │║                               ║
+   ║   │  vault         :30200 (all pods)    │║                               ║
+   ║   │  vault-active  :31326 (leader-only) │║◄─ nginx /ui/ + /v1/ point here║
+   ║   │  vault-standby :32012               │║                               ║
+   ║   │ KV-v2 at `secret/`                  │║                               ║
+   ║   │ AppRole auth enabled                │║                               ║
+   ║   │ Token method: hvs.* root from       │║                               ║
+   ║   │   ~/.vault/init.json on gdragon     │║                               ║
    ║   └─────────────────────────────────────┘║                               ║
    ║                                          ║                               ║
    ║  argocd namespace (GitOps):              ║                               ║
    ║   ┌─────────────────────────────────────┐║                               ║
-   ║   │ argocd-server  :30401 (NodePort)    │║──┐                            ║
-   ║   │ application-controller              │║  │ git pull → reconcile        ║
-   ║   │ repo-server, dex, redis, notifier,  │║  │ both clusters' workloads   ║
+   ║   │ argocd-server  :30401 (http)        │║──┐                            ║
+   ║   │                :30400 (https)       │║  │ git pull → reconcile        ║
+   ║   │ application-controller, repo-server,│║  │ vault Application (and      ║
+   ║   │ dex, redis, notifier,               │║  │ future workloads)           ║
    ║   │ applicationset-controller (fixed)   │║  │                             ║
-   ║   └─────────────────────────────────────┘║  ▼                             ║
-   ║                                          ║   github.com/myhome-automation ║
-   ║  Other namespaces:                       ║   /git-vsphere (this repo)     ║
+   ║   │ rootpath=/argocd                    │║  ▼                             ║
+   ║   └─────────────────────────────────────┘║   github.com/myhome-automation ║
+   ║                                          ║   /git-vsphere (this repo)     ║
+   ║  Other namespaces:                       ║                               ║
    ║   calico-system, calico-apiserver,       ║                               ║
    ║   tigera-operator, kube-system           ║                               ║
    ║                                          ║                               ║
@@ -128,32 +144,65 @@ physical machines:
 
 ---
 
-## Application catalog (where everything lives)
+## Application catalog (verified working 2026-05-18)
 
-| App | Cluster / host | Namespace / unit | Exposed at | URL via nginx proxy | Notes |
+All apps are reachable both via the edge nginx proxy at `192.168.1.203` and via direct NodePort. Credentials live in different places per app — see "Credentials" column.
+
+| App | Cluster | Namespace | URL via nginx proxy | Direct NodePort | Credentials |
 |---|---|---|---|---|---|
-| **Grafana** ("search head") | k3os-local | monitoring | NodePort 30300 | http://192.168.1.181:30300 ✅ | nginx-proxy `/grafana/` ⚠️ 404. admin / changeme-home-lab; queries Prometheus + Loki |
-| **Prometheus** (data store + scraper) | k3os-local | monitoring | NodePort 30320 | http://192.168.1.181:30320 ✅ | nginx-proxy `/prometheus/` ⚠️ 404. enableRemoteWriteReceiver = true; accepts pushes from homelab |
-| **Loki** | k3os-local | monitoring | NodePort 30310 | http://192.168.1.181:30310/ready ✅ | nginx-proxy `/loki/` ✅ works. log push endpoint; no UI; query via Grafana |
-| **Alertmanager** | k3os-local | monitoring | ClusterIP 9093 | (not exposed) | small, no notifier configured yet |
-| **Promtail (local)** | k3os-local | monitoring | DaemonSet | n/a | ships gdragon's k3s logs to Loki with cluster=k3os-local |
-| **Prometheus (homelab)** | homelab | monitoring | ClusterIP | n/a | remote_writes to gdragon:30320 with cluster=homelab |
-| **Promtail (homelab)** | homelab | monitoring | DaemonSet (6 nodes) | n/a | pushes to gdragon:30310 with cluster=homelab |
-| **Vault** | k3os-local | vault | NodePort 30200 | http://192.168.1.181:30200/ui/ ❌ | nginx-proxy `/vault/` ⚠️ 404. All 3 pods CrashLoopBackOff (sealed + liveness kill loop) — see Vault section below |
-| **ArgoCD server** | k3os-local | argocd | NodePort 30401 (http) / 30400 (https) | http://192.168.1.181:30401 ✅ | nginx-proxy `/argocd/` ⚠️ 404. GitOps reconciler; manages vault Application; admin pass: `kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' \| base64 -d` |
-| **k8s API (homelab)** | homelab | kube-system | VIP 192.168.1.50:6443 | (not exposed via nginx) | via HAProxy on lb1/lb2 |
-| **DNS (homelab)** | homelab | n/a (on LBs) | VIP 192.168.1.50:53 | n/a | dnsmasq HA on lb1+lb2; `*.myhomelab.com` |
-| **Istio (homelab)** | homelab | istio-system | ingressgateway not externally exposed | n/a | sidecar injection enabled on `default` namespace |
+| **Grafana** ("search head") | k3os-local | monitoring | http://192.168.1.203/grafana/ | http://192.168.1.181:30300 | `admin` / `changeme-home-lab` (in `monitoring/local-k3s/kube-prometheus-stack-values.yaml`) |
+| **Prometheus** | k3os-local | monitoring | http://192.168.1.203/prometheus/ | http://192.168.1.181:30320 | none |
+| **Loki** | k3os-local | monitoring | http://192.168.1.203/loki/ready | http://192.168.1.181:30310/ready | none (no UI; query via Grafana) |
+| **Alertmanager** | k3os-local | monitoring | (not exposed) | ClusterIP 9093 | none; no notifier configured |
+| **Vault UI** | k3os-local | vault | http://192.168.1.203/ui/ (also `/vault/` → 302 → `/ui/`) | http://192.168.1.181:31326/ui/ (vault-active, leader-only) | Method = **Token**; root token: `jq -r .root_token ~/.vault/init.json` on gdragon |
+| **Vault API** | k3os-local | vault | http://192.168.1.203/v1/... | http://192.168.1.181:31326/v1/... | same root token (or any AppRole / KV-v2 token) |
+| **ArgoCD server** | k3os-local | argocd | http://192.168.1.203/argocd/ | http://192.168.1.181:30401 (http) / :30400 (https) | `admin` / `kubectl --context k3os-local -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' \| base64 -d` |
+| **Landing page** | k3os-local | (nginx) | http://192.168.1.203/ | n/a | none |
+| **Promtail (local)** | k3os-local | monitoring | n/a | DaemonSet | n/a — pushes k3s logs to Loki with `cluster=k3os-local` |
+| **Prometheus (homelab)** | homelab | monitoring | n/a | ClusterIP | n/a — remote_writes to gdragon:30320 with `cluster=homelab` |
+| **Promtail (homelab)** | homelab | monitoring | n/a | DaemonSet (6 nodes) | n/a — pushes to gdragon:30310 with `cluster=homelab` |
+| **k8s API (homelab)** | homelab | kube-system | not exposed | VIP 192.168.1.50:6443 | kubeconfig at `~/.kube/config` context `homelab` |
+| **DNS (homelab)** | homelab | (on LBs) | n/a | VIP 192.168.1.50:53 | dnsmasq HA on lb1+lb2; `*.myhomelab.com` |
+| **Istio (homelab)** | homelab | istio-system | not externally exposed | (ingressgateway pending LB-type Service) | n/a; sidecar injection on `default` namespace |
 
-**Symbol legend:**
-- ✅ = working as listed
-- ❌ = currently broken at the listed URL
-- ⚠️ = the nginx-proxy path returns 404 because the upstream app sends an absolute redirect that escapes its sub-path. Fixes:
-  - Grafana: `grafana.ini [server] root_url = /grafana/` + `serve_from_sub_path = true` (helm values)
-  - Prometheus: args `--web.external-url=http://192.168.1.203/prometheus --web.route-prefix=/`
-  - ArgoCD: `argocd-cmd-params-cm` `server.rootpath: /argocd` + restart `argocd-server`
-  - Vault: helm `server.ha.config.api_addr = "http://192.168.1.203/vault"` (and Vault itself must be up)
-- Tracked in [TODO list](#whats-not-in-this-cluster-yet) and `nginx-proxy/README.md`.
+**How sub-path mode is configured per app:**
+- **Grafana** — helm values `grafana.grafana.ini.server.{root_url, serve_from_sub_path}` in `monitoring/local-k3s/kube-prometheus-stack-values.yaml`.
+- **Prometheus** — helm values `prometheus.prometheusSpec.{externalUrl, routePrefix}` in same file.
+- **Loki** — nginx strips `/loki/` (Loki has no path-prefix awareness; its endpoints already live at `/ready`, `/metrics`, `/loki/api/v1/*`).
+- **ArgoCD** — `argocd-cmd-params-cm` `server.rootpath: /argocd` (set in-cluster, not in this repo yet).
+- **Vault** — none. Vault has no equivalent of `serve_from_sub_path`. Solution: nginx mounts Vault at the **root** paths it natively uses (`/ui/`, `/v1/`) and 302-redirects `/vault/*` → `/ui/`. Safe because no other app in the lab uses `/ui/` or `/v1/` at root.
+
+---
+
+## Image registry — quay.io
+
+External (read for pulls, write for our own pushes). Two repos under `quay.io/bpraisa/`:
+
+| Repo | Tags | Used for | Built / Mirrored from |
+|---|---|---|---|
+| `quay.io/bpraisa/nginx` | `homelab-proxy-1.0` … `homelab-proxy-1.4` | edge reverse proxy (containers nginx-1, nginx-2 on .203) | local build from `nginx-proxy/{Dockerfile,nginx.conf}` |
+| `quay.io/bpraisa/vault` | `1.20.4`, `latest` | reserved for future helm-chart pulls (currently chart still pulls from `hashicorp/vault` on dockerhub) | `podman pull docker.io/hashicorp/vault:1.20.4` then retag + push |
+
+**Auth model.** quay.io robot account (write-scoped to specific repos). Username + token stored ansible-vault encrypted in `ansible/group_vars/all/vault.yml` as `vault_quay_username` + `vault_quay_password`. `ansible/playbooks/quay-login.yml` runs `podman login` on the edge_proxy host and persists the credentials at `~/.config/containers/auth.json` for later non-interactive pushes.
+
+**Gotcha — per-repo robot permissions.** Robot accounts on quay.io are scoped per-repo, not org-wide. A newly created repo needs the robot added under `Settings → User and Robot Permissions` with `Write` access. Symptom of missing permission: `unauthorized: access to the requested resource is not authorized` on `podman push`. Bit us 2026-05-18 when creating `quay.io/bpraisa/vault`.
+
+**Push procedure** (nginx-proxy rebuild example):
+
+```bash
+# 1. Edit nginx-proxy/nginx.conf
+# 2. Build on .203 (rootless podman):
+scp nginx-proxy/{Dockerfile,nginx.conf} bstha@192.168.1.203:/tmp/
+ssh bstha@192.168.1.203 \
+  'cd /tmp && podman build -t quay.io/bpraisa/nginx:homelab-proxy-X.Y .'
+
+# 3. Push (uses persistent authfile from quay-login.yml):
+ssh bstha@192.168.1.203 \
+  'podman push --authfile ~/.config/containers/auth.json quay.io/bpraisa/nginx:homelab-proxy-X.Y'
+
+# 4. Bump the tag in nginx-proxy/install.sh and rerun it.
+bash nginx-proxy/install.sh 192.168.1.203
+```
 
 ---
 
@@ -185,6 +234,130 @@ There are TWO independent load-balancer layers in this lab:
 | HA model | Both run continuously, `--restart=always`; if `:80` is wedged, users fall back to `:8080`. True single-VIP failover would need keepalived in front. |
 | Config | baked into the image — no host volume mount; rebuild + push to bump |
 | Build/push | `nginx-proxy/build-and-push.sh` (uses ansible-vault robot creds; see `ansible/playbooks/quay-login.yml`) |
+
+---
+
+## Network flow — per cluster and per request type
+
+### 1. User browser → app UI (via edge proxy)
+
+```
+Browser → 192.168.1.203:80 (nginx-1, podman rootless)
+            │
+            ├── location /grafana/    → 192.168.1.181:30300 (k3s NodePort)
+            │                         → Service kps-grafana
+            │                         → Pod kps-grafana-*  (Grafana 11.x)
+            │
+            ├── location /prometheus/ → 192.168.1.181:30320
+            │                         → Service kps-prometheus → Pod prometheus-kps-prometheus-0
+            │
+            ├── location /loki/       → 192.168.1.181:30310
+            │                         → Service loki → Pod loki-0
+            │
+            ├── location /ui/, /v1/   → 192.168.1.181:31326 (vault-active NodePort, leader-only)
+            │                         → Service vault-active → Pod vault-0 (only the raft leader)
+            │
+            ├── location /argocd/     → 192.168.1.181:30401
+            │                         → Service argocd-server → Pod argocd-server-*
+            │
+            └── location /            → static landing HTML (no upstream)
+```
+
+### 2. kubectl from workstation → homelab cluster
+
+```
+kubectl --context homelab ...
+   │
+   ▼
+https://192.168.1.50:6443     (keepalived VIP)
+   │
+   ▼
+lb1 (192.168.1.188, MASTER)   or lb2 (.185) if lb1 is down
+   │  HAProxy tcp-mode, balance roundrobin
+   ▼
+kmaster1 .186 :6443  /  kmaster2 .189 :6443  /  kmaster3 .187 :6443
+   │
+   ▼
+kube-apiserver → etcd quorum → response
+```
+
+### 3. Homelab cluster → local-k3s monitoring (cross-cluster data plane)
+
+Two streams from homelab into local-k3s on .181:
+
+```
+Homelab Prometheus (in-cluster, ClusterIP)
+   │
+   │ remote_write (external label: cluster=homelab)
+   ▼
+192.168.1.181:30320     (k3s NodePort Service kps-prometheus)
+   │
+   ▼
+Pod prometheus-kps-prometheus-0  (enableRemoteWriteReceiver=true)
+   │
+   └─→ stored alongside local scrapes (external label: cluster=k3os-local)
+
+
+Homelab Promtail DaemonSet (on every k8s node)
+   │
+   │ HTTP push (cluster=homelab)
+   ▼
+192.168.1.181:30310     (k3s NodePort Service loki)
+   │
+   ▼
+Pod loki-0
+```
+
+### 4. ArgoCD reconciliation flow
+
+```
+ArgoCD application-controller (on local-k3s)
+   │  every ~3 min
+   ▼
+github.com/myhome-automation/git-vsphere  (HTTPS, anonymous read)
+   │
+   ▼
+Diff desired (manifests in argocd/) vs live cluster state
+   │
+   ▼
+Apply: kubectl apply (via in-cluster Service Account)
+   - vault Application → helm chart pulled from helm.releases.hashicorp.com
+   - future Applications similarly
+```
+
+### 5. Image pulls (where every container actually comes from)
+
+```
+nginx-proxy on .203          ← quay.io/bpraisa/nginx:homelab-proxy-1.4
+                                (built by us; pushed from .203)
+
+Vault pods on local-k3s      ← docker.io/hashicorp/vault:1.20.4
+                                (chart default; mirror also at
+                                 quay.io/bpraisa/vault:1.20.4 for
+                                 future cutover)
+
+Grafana / Prometheus / Loki  ← docker.io / ghcr.io (helm chart defaults)
+                                via kube-prometheus-stack and loki-stack
+
+ArgoCD                       ← quay.io/argoproj/argocd
+                                (Argo project's official quay images)
+
+Calico, kube-system, etc.    ← docker.io / quay.io (k3s/Calico defaults)
+```
+
+### 6. DNS resolution for cluster hosts
+
+```
+Cluster VM resolves myhomelab.com names
+   │
+   ▼
+192.168.1.50:53  (VIP held by whichever LB is MASTER)
+   │
+   ▼ dnsmasq (bind-dynamic) on lb1 or lb2
+   │
+   ├── *.myhomelab.com   → answered from /etc/dnsmasq.hosts.d/myhomelab.hosts
+   └── anything else     → forwarded upstream to 192.168.1.1 (home router)
+```
 
 ---
 

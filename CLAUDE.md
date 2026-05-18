@@ -52,6 +52,15 @@ Beyond the ESXi host, the home lab has expanded to two more boxes:
 
 Cross-machine deploy: `bash nginx-proxy/install.sh 192.168.1.203` (re-pulls + restarts the HA pair); `bash nginx-proxy/build-and-push.sh quay.io/bpraisa/nginx:homelab-proxy-1.4` (rebuild + push image — uses the robot creds in ansible-vault; bootstrap the login with `ansible-playbook ... playbooks/quay-login.yml`).
 
+## Image registry — `quay.io/bpraisa/`
+
+Two repos in active use:
+
+- **`quay.io/bpraisa/nginx`** — custom edge reverse proxy image (path-based routing). Current production tag: `homelab-proxy-1.4`. Built from `nginx-proxy/{Dockerfile,nginx.conf}`. Build/push procedure in `docs/operations.md` "Edge nginx-proxy on .203 — rebuild + redeploy".
+- **`quay.io/bpraisa/vault`** — mirror of `hashicorp/vault:1.20.4` + `:latest`, pushed for future helm-chart cutover. The chart currently still pulls from dockerhub.
+
+Auth: ansible-vault encrypted robot creds in `ansible/group_vars/all/vault.yml` (`vault_quay_username`, `vault_quay_password`). Bootstrap the persistent `auth.json` on the edge host with `ansible-playbook playbooks/quay-login.yml`. **Per-repo permission gotcha**: a new quay repo doesn't grant the existing robot anything by default; symptom is `unauthorized: access to the requested resource is not authorized` on push. Fix at `https://quay.io/repository/bpraisa/<repo>/?tab=settings`.
+
 ## Two load-balancer layers (different jobs)
 
 1. **Homelab API LB pair** — `lb1` MASTER + `lb2` BACKUP on the ESXi side. keepalived VIP `192.168.1.50` fronting HAProxy. Used by the k8s control plane (kubeadm `--control-plane-endpoint=192.168.1.50:6443`), HTTP/HTTPS NodePort backends (kworker*:30080/30443), and the homelab DNS zone `myhomelab.com` via dnsmasq HA. Configured in `ansible/playbooks/loadbalancer.yml` + `dns.yml`. Failover ~3 s.
