@@ -1010,7 +1010,7 @@ kubectl --context k3os-local -n monitoring exec prometheus-kps-prometheus-0 -c p
 - `docs/` — per-component runbooks (deeper than this single-file guide)
 - `drawio-dgr/` — multi-page draw.io architecture diagrams
 - `AGENTS.md` — short orientation for anyone (human or AI agent) coming cold
-- `INFRA_IMPLEMENTATION_NOTES.md` — **this file**
+- `docs/infra-implementation-notes.md` — **this file**
 
 **External resources:**
 - GitHub: `git@github.com:myhome-automation/git-vsphere.git`
