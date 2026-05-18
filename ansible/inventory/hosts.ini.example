@@ -23,6 +23,11 @@ lb2 ansible_host=192.168.1.x keepalived_state=BACKUP keepalived_priority=100
 [vault]
 vault-server ansible_host=192.168.1.x
 
+# Optional: edge / reverse proxy host (Ubuntu) running podman + nginx.
+# Different SSH user and key from the homelab VMs — set per-host overrides.
+[edge_proxy]
+gdragon-edge ansible_host=192.168.1.203 ansible_user=bstha ansible_ssh_private_key_file=/home/bstha/.ssh/id_ed25519
+
 [cluster:children]
 k8s_masters
 k8s_workers

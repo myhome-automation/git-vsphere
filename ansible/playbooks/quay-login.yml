@@ -1,0 +1,62 @@
+---
+# Log podman in to quay.io on the edge_proxy host using credentials
+# from ansible-vault. Lands the auth at a PERSISTENT path so push
+# can reuse it from any subsequent SSH session.
+#
+# Required vault vars (in group_vars/all/vault.yml, ansible-vault encrypted):
+#   vault_quay_username
+#   vault_quay_password   (cleartext password OR robot-account token)
+#
+# Usage:
+#   cd ansible/
+#   ansible-playbook -i inventory/hosts.ini --vault-password-file=.vault_pass \
+#     playbooks/quay-login.yml
+#
+# After this succeeds, push manually or via podman_image:
+#   ssh 192.168.1.203 'podman push --authfile ~/.config/containers/auth.json \
+#     quay.io/bpraisa/nginx:homelab-proxy-1.0'
+
+- name: quay-login | persist podman credentials for quay.io
+  hosts: edge_proxy
+  gather_facts: false
+
+  vars:
+    authfile: "{{ ansible_user_dir }}/.config/containers/auth.json"
+
+  tasks:
+    - name: ensure ~/.config/containers exists
+      file:
+        path: "{{ ansible_user_dir }}/.config/containers"
+        state: directory
+        mode: "0700"
+
+    - name: podman login (password via stdin, never appears in logs)
+      command: >
+        podman login
+        --username {{ vault_quay_username }}
+        --password-stdin
+        --authfile {{ authfile }}
+        quay.io
+      args:
+        stdin: "{{ vault_quay_password }}"
+      no_log: true
+      register: login_out
+      changed_when: "'Login Succeeded' in login_out.stdout"
+
+    - name: confirm authfile present and non-empty
+      stat:
+        path: "{{ authfile }}"
+      register: af
+
+    - assert:
+        that:
+          - af.stat.exists
+          - af.stat.size > 50
+        fail_msg: "authfile {{ authfile }} missing or too small — login likely failed"
+
+    - debug:
+        msg: |
+          quay.io login persisted at {{ authfile }} ({{ af.stat.size }} bytes).
+          Push the image with:
+            ssh 192.168.1.203 'podman push --authfile {{ authfile }} \
+              quay.io/bpraisa/nginx:homelab-proxy-1.0'

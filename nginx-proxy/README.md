@@ -73,12 +73,35 @@ nginx-proxy/
 # Initial setup or refresh after editing nginx.conf:
 bash nginx-proxy/install.sh 192.168.1.203
 
-# Build + push image to quay.io (one-time `sudo podman login quay.io` on .203 first):
-bash nginx-proxy/build-and-push.sh quay.io/myhome-automation/nginx-homelab-proxy:1.0
+# Build + push image to quay.io:
+# 1. add quay credentials to ansible-vault (one-time):
+cd ansible/
+ansible-vault edit --vault-password-file=.vault_pass group_vars/all/vault.yml
+# add:
+#   vault_quay_username: bpraisa
+#   vault_quay_password: "<password or robot token>"
 
-# On the .203 host:
-sudo podman ps                                       # see both nginx containers
-sudo podman logs nginx-1 --tail 50                   # request logs
-sudo podman restart nginx-1                          # bounce one
-sudo podman exec nginx-1 nginx -t                    # validate config inside container
+# 2. persist podman login on .203 from the vault creds:
+ansible-playbook -i inventory/hosts.ini --vault-password-file=.vault_pass \
+  playbooks/quay-login.yml
+
+# 3. push the image:
+ssh 192.168.1.203 'podman push --authfile ~/.config/containers/auth.json \
+  quay.io/bpraisa/nginx:homelab-proxy-1.0'
+
+# On the .203 host (rootless podman, no sudo needed):
+podman ps                                            # see both nginx containers
+podman logs nginx-1 --tail 50                        # request logs
+podman restart nginx-1                               # bounce one
+podman exec nginx-1 nginx -t                         # validate config inside container
 ```
+
+## Why the quay-login playbook exists
+
+`podman login quay.io` writes its auth.json to `$XDG_RUNTIME_DIR/containers/`
+by default, which is a **per-login-session** tmpfs path. As soon as the
+shell that did the login exits, the auth disappears — and any subsequent
+SSH session won't find it. The `quay-login.yml` playbook forces the
+auth file to a persistent path (`~/.config/containers/auth.json`) using
+`podman login --authfile`. After running it once, every `podman push
+--authfile ~/.config/containers/auth.json ...` works from any session.
