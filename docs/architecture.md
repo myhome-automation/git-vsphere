@@ -1,7 +1,12 @@
 # Architecture — Home Lab Kubernetes on ESXi
 
-State as of 2026-05-16. 1 physical host, 9 VMs (1 vault workload + 8
-k8s cluster).
+State as of 2026-05-17. Spans **three physical machines** plus 9 VMs:
+
+| Tier | Hardware | Hosts |
+|---|---|---|
+| **ESXi hypervisor** | HP Z620, 192.168.1.174, ESXi 6.7 | 9 homelab VMs (k8s + LBs + vault-server) |
+| **Workstation (k3s + monitoring + Vault + ArgoCD)** | `gdragon`, 192.168.1.181, Rocky 9 | local k3s, kube-prometheus-stack, Loki, Vault (HA shape) |
+| **Edge / reverse proxy** | `gdragon-ubuntu`, 192.168.1.203, Ubuntu 24.04 | 2 podman nginx containers — path-based proxy for everything above |
 
 ---
 
@@ -19,6 +24,19 @@ k8s cluster).
 │  │ 1.4 TB                  │    │ 931 GB                   │            │
 │  │ kmaster1-3, dns1, lb1   │    │ kworker1-3, vault-server │            │
 │  └─────────────────────────┘    └──────────────────────────┘            │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│  gdragon (192.168.1.181)  — workstation, runs k3s + ansible             │
+│  Rocky 9, LVM /var grew from 28G → 128G (added /dev/sdb 100G)           │
+│  k3s 1.34.3 (single-node), Calico CNI (IPPool 192.168.0.0/16 ⚠ overlap) │
+│   workloads in argocd + monitoring + vault + calico-system namespaces   │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│  gdragon-ubuntu (192.168.1.203) — Ubuntu 24.04 LTS, edge proxy host     │
+│  podman 4.9 rootless, 2 nginx containers (:80 nginx-1, :8080 nginx-2)   │
+│  Custom image: quay.io/myhome-automation/nginx-homelab-proxy:1.0        │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -174,13 +192,80 @@ DNS arrows:
 
 ---
 
+## Edge / reverse proxy on .203 (added 2026-05-17)
+
+```
+  LAN ──► :80   ┌──────────────────────────────────────┐
+       ──► :8080│  gdragon-ubuntu (192.168.1.203)      │
+                │  podman rootless                     │
+                │  ┌─ nginx-1 :80   ─┐  ┌─ nginx-2 :8080 ─┐
+                │  │ same image:    │  │ same image:    │
+                │  │ quay.io/.../   │  │ quay.io/.../   │
+                │  │  nginx-homelab-proxy:1.0           │
+                │  └────────┬──────┘  └────────┬───────┘
+                │           │ path-based      │
+                └───────────┼─────────────────┼────────┘
+                            ▼                 ▼
+       /grafana/    →  192.168.1.181:30300  (Grafana)
+       /prometheus/ →  192.168.1.181:30320  (Prometheus)
+       /loki/       →  192.168.1.181:30310  (Loki API)
+       /vault/      →  192.168.1.181:30200  (Vault UI/API)
+       /argocd/     →  192.168.1.181:30401  (ArgoCD)
+       /           landing page
+```
+
+Both nginx containers run the **same baked-in image** and the same
+config. HA model: if `nginx-1` (host `:80`) is wedged, users reach
+`:8080`. Restart policy `always` recovers from container-level crashes.
+True single-VIP failover would need keepalived between the two ports
+— not needed for current scale.
+
+Build/push: `bash nginx-proxy/build-and-push.sh quay.io/myhome-automation/nginx-homelab-proxy:1.0`.
+
+App sub-path mode (each app must know it's behind a sub-path) status:
+| App | Sub-path mode | Works through proxy? |
+|---|---|---|
+| Landing page (/) | n/a | ✅ |
+| Loki API | n/a (no UI) | ✅ |
+| Vault | partial | ✅ via `/vault/ui/` |
+| Grafana | not set | ❌ — set `grafana.ini` `root_url` + `serve_from_sub_path` |
+| Prometheus | not set | ❌ — set `--web.external-url=...prometheus/` `--web.route-prefix=/` |
+| ArgoCD | not set | ❌ — set `--rootpath=/argocd` in `argocd-cmd-params-cm` |
+
+---
+
+## Cross-cluster Vault (added 2026-05-17)
+
+Production-shape Vault on the local k3s. 3-replica StatefulSet with
+integrated Raft storage. Deployed via ArgoCD (`argocd/vault.yaml`).
+
+```
+   ┌─ vault-0 (Raft leader, initialized, unsealed) ◄── KV-v2 + AppRole
+   │
+   ├─ vault-1 (pod up, sealed, NOT yet raft-joined)  ◄── Calico IPPool
+   │                                                     overlap blocks
+   └─ vault-2 (pod up, sealed, NOT yet raft-joined)      pod-to-pod
+```
+
+Reachable at `http://192.168.1.181:30200/ui/`. Unseal keys + root
+token saved at `~/.vault/init.json` (chmod 600) on gdragon — move
+to password manager and remove from disk.
+
+---
+
 ## What's NOT in this cluster (yet)
 
-- splunk-monitoring VM (deferred — memory available now after GUI strip)
-- ingress controller (nginx-ingress or istio-ingressgateway exposed externally)
-- persistent storage (no SC, no PV provisioner)
+- ingress controller inside homelab (istio-ingressgateway not exposed externally;
+  nginx on .203 serves that role for user-facing access)
+- persistent storage on homelab cluster (no SC, no PV provisioner — only emptyDir)
 - backup / etcd snapshot strategy
 - vSphere vCenter (single ESXi host only)
+- Calico IPPool migration on local k3s (current 192.168.0.0/16 overlaps the
+  home network; workstation-level MASQUERADE rule unsticks pod→external but
+  pod-to-pod between Vault replicas still broken)
+- Per-app sub-path config so Grafana/Prometheus/ArgoCD work through the
+  nginx proxy (see "Edge / reverse proxy" table above)
+- Vault auto-unseal (manual key entry today)
 
 ---
 

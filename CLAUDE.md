@@ -42,6 +42,22 @@ Switch with `kubectl config use-context <name>` or use `--context <name>` per co
 
 Cross-cluster monitoring: Grafana at `http://192.168.1.181:30300` (admin / `changeme-home-lab`). homelab Prometheus remote_writes to local Prometheus (`:30320`); Promtail DaemonSets on both clusters push to local Loki (`:30310`). Both data sources are tagged with `cluster=homelab` or `cluster=k3os-local`. Full architecture, install commands, and gotchas in `monitoring/README.md`.
 
+## Three physical machines (not just one ESXi host)
+
+Beyond the ESXi host, the home lab has expanded to two more boxes:
+
+- **`gdragon`** (workstation, 192.168.1.181, Rocky 9) — runs `k3s` (single-node), the cross-cluster monitoring stack, **HashiCorp Vault** (3-replica HA shape, `vault-0` is currently the active leader), ArgoCD, and is where ansible runs from. Local `/var` was grown to 128 GiB after a hot-added 100 GiB disk to fit the Vault + monitoring PVCs.
+- **`gdragon-ubuntu`** (192.168.1.203, Ubuntu 24.04) — edge / reverse proxy host. Runs **2 podman-rootless nginx containers** from `quay.io/bpraisa/nginx:homelab-proxy-1.0` (the custom image we build from `nginx-proxy/Dockerfile`); HA via two host-port bindings (`:80` and `:8080`) + `--restart=always`. Path-based routing to k3s/homelab services (`/grafana/`, `/prometheus/`, `/loki/`, `/vault/`, `/argocd/`). See `nginx-proxy/README.md`.
+- **ESXi 6.7** (192.168.1.174) — the original hypervisor; runs the 9 homelab VMs.
+
+Cross-machine deploy: `bash nginx-proxy/install.sh 192.168.1.203` (re-pulls + restarts the HA pair); `bash nginx-proxy/build-and-push.sh quay.io/bpraisa/nginx:homelab-proxy-1.0` (rebuild + push image — needs persistent `podman login quay.io` first; `/run/user/$UID/containers/auth.json` is *transient*, prefer `--authfile ~/.config/containers/auth.json`).
+
+## Vault on local k3s (production-shape HA, ArgoCD-managed)
+
+3-replica Vault StatefulSet, integrated Raft storage, helm chart `hashicorp/vault 0.31.0` (image `1.20.4`). Deployed via ArgoCD Application at `argocd/vault.yaml`; values mirror at `vault/values.yaml`. UI: `http://192.168.1.181:30200/ui/`. Unseal keys + root token kept at `~/.vault/init.json` on gdragon (chmod 600) — should be moved to a password manager and removed from disk.
+
+Current state: `vault-0` is leader (init'd, unsealed, KV-v2 at `secret/`, AppRole auth enabled). `vault-1`/`vault-2` pods up but **not yet raft-joined** — blocked by Calico IPPool overlap on k3s (`192.168.0.0/16` IPPool ∩ home network `192.168.1.0/24`), which prevents pod-to-pod from `vault-1` → `vault-0`. A workstation-level `systemd` unit (`k3s-pod-masq.service`) masquerades pod → external traffic but doesn't fix pod-to-pod within the affected pool. Proper fix: migrate IPPool to a non-overlapping CIDR (destructive — rebuilds all pods). See `vault/README.md`.
+
 ```bash
 cd ansible/
 
