@@ -2,6 +2,57 @@
 
 This file provides orientation for anyone (human or AI agent) working with code in this repository.
 
+## Resume here — current state (last verified 2026-05-18)
+
+A new session should start by reading this section, then `docs/infra-implementation-notes.md`
+(the single-file build-from-scratch runbook). Everything below is the result of recent work;
+treat dates and tag/SHA references as accurate at the time stamped.
+
+### Verified working (smoke-tested end-to-end)
+- **Homelab k8s cluster**: all 6 nodes Ready (3 masters + 3 workers, v1.36.1). Calico v3.30.4 healthy, APIService `v3.projectcalico.org` True. k8s API via VIP `192.168.1.50:6443` responding.
+- **HA LB pair** (lb1 MASTER prio 101, lb2 BACKUP prio 100): keepalived VIP `192.168.1.50` plus dnsmasq for `myhomelab.com`. Failover ~3 s.
+- **Local k3s on gdragon** (192.168.1.181): monitoring stack + ArgoCD + Vault all up. cross-cluster `remote_write` from homelab Prometheus into local Prometheus :30320, Promtail DaemonSets on both clusters pushing to local Loki :30310.
+- **Vault**: `vault-0` is the Raft leader (initialized, unsealed). `vault-2` raft-joined. **`vault-1` is CrashLoopBackOff** (Calico IPPool overlap blocks its pod IP — known limitation, not a regression).
+- **Edge nginx proxy on .203** at `quay.io/bpraisa/nginx:homelab-proxy-1.4`. All six paths return 2xx through `http://192.168.1.203/`:
+  - `/` (landing), `/grafana/`, `/prometheus/`, `/loki/ready`, `/argocd/`, `/ui/` (Vault — root-mounted because the SPA has no sub-path mode).
+
+### Open items
+- **Vault-1 raft-join** — blocked by Calico IPPool `192.168.0.0/16` overlapping with home LAN `192.168.1.0/24` on the local k3s. Workaround `k3s-pod-masq.service` (systemd) is already running. Proper fix is a destructive IPPool migration; see `vault/README.md`.
+- **Istio ingressgateway externally exposed** — `LoadBalancer` Service pending; no MetalLB on the homelab cluster yet.
+- **ESXi NTP / clock drift** — host clock drifts; VMs absorb it on boot. `all_powerup.yml` runs `chronyc makestep` to recover; the host itself still needs proper NTP setup.
+- **etcd snapshot strategy** — none yet.
+- **Persistent storage class on homelab cluster** — no PV provisioner yet (local-path or NFS).
+- **`~/.vault/init.json` on disk** — should move to a password manager. Currently chmod 600 on gdragon.
+- **Rename ESXi VM directory** — lb2's display name is `lb2` but the on-disk path is still `datastore1/dns1/` (cosmetic).
+
+### Recent significant changes (commit refs on `main`)
+- `b7a13f7` — move `infra-implementation-notes.md` into `docs/`, fix self-reference.
+- `b3cc76c` — add the 25-phase build-from-scratch runbook.
+- `b881b50` — new `full_shutdown.yml` / `full_powerup.yml` orchestrators across all three physical hosts; ESXi maintenance-mode pre-check added to powerup playbooks; new `edge_*.yml` + `vault_unseal.yml` building blocks.
+- `542b4d9` — rename `CLAUDE.md` → `AGENTS.md`; scrub agent-tool naming throughout history. Full author rewrite to `bstha <bidur.devsecops@gmail.com>` (no other contributors).
+- Earlier in the same session: Vault liveness probe `sealedcode=204` fix, edge-proxy nginx 1.0 → 1.4 progression with sub-path mode end-to-end, `quay.io/bpraisa/{nginx,vault}` registry repos established.
+
+### First commands a new session should run (sanity check)
+```bash
+cd /apps/git-code/git-vsphere
+
+# Cluster reachable?
+kubectl --context homelab get nodes
+kubectl --context k3os-local get pods -A | grep -v Running | grep -v Completed
+
+# Proxy URLs answering?
+for p in / /grafana/ /prometheus/ /loki/ready /ui/ /argocd/; do
+  printf "%-22s %s\n" "$p" "$(curl -sSL -o /dev/null -w '%{http_code}' http://192.168.1.203$p)"
+done
+
+# Vault leader still unsealed?
+kubectl --context k3os-local -n vault exec vault-0 -- vault status | grep -E "Sealed|HA Mode"
+```
+
+If anything fails: `docs/operations.md` has the recovery playbooks (incl. ESXi maintenance-mode and Vault unseal). For a totally cold rebuild: `docs/infra-implementation-notes.md`.
+
+---
+
 ## What this repo is
 
 Infrastructure-as-code for a 9-VM home-lab Kubernetes cluster running on a single ESXi 6.7 host (`192.168.1.174`, 60 GB RAM). The end state: 3 k8s masters + 3 workers + an HA load-balancer pair (lb1 MASTER + lb2 BACKUP, both running HAProxy + keepalived + dnsmasq) + a `vault-server` source VM, all Rocky 9.7. Full layout, network topology, and CIDRs live in `docs/architecture.md`.
