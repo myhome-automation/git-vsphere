@@ -1,5 +1,10 @@
 # HA nginx reverse proxy (2 containers on Ubuntu host)
 
+**Image:** [`quay.io/bpraisa/nginx`](https://quay.io/repository/bpraisa/nginx) (public, anonymous pull)
+- `homelab-proxy-1.0` — pinned tag for this version
+- `latest` — moves with each rebuild
+
+
 Path-based reverse proxy that fronts the home-lab's k3s + homelab apps,
 running as **two podman containers on `192.168.1.203` (Ubuntu 24.04)**.
 Hosting the proxy off the loaded k3s box frees gdragon for the
