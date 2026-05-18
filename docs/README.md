@@ -6,6 +6,7 @@ you're debugging.
 
 | File | Covers |
 |------|--------|
+| **[infra-implementation-notes.md](infra-implementation-notes.md)** | **Single-file build-from-scratch procedural guide — 25 phases from bare hardware to working stack, plus verification + troubleshooting + quick-reference cheatsheet** |
 | **[architecture.md](architecture.md)** | **Full system architecture: hardware, network, k8s layer, CIDRs, port matrix, LB failover sequence, request/DNS flows** |
 | **[deployment.md](deployment.md)** | **End-to-end deployment runbook: clone-from-vault → site.yml → verification checklist** |
 | **[restart-sequence.md](restart-sequence.md)** | **Safe power-down / power-up order with NTP clock-step + post-powerup health probe (use `all_powerup.yml` / `all_shutdown.yml`)** |
