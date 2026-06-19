@@ -1,12 +1,30 @@
 # Architecture — Home Lab Kubernetes on ESXi
 
-State as of 2026-05-17. Spans **three physical machines** plus 9 VMs:
+> ### ⚠ Topology change — 2026-06-19
+> The **single-node k3s on `gdragon` (192.168.1.181) was decommissioned.**
+> `k3s-uninstall.sh` was run and the host repurposed. With it went the
+> workloads it hosted: **monitoring (Prometheus/Grafana/Loki/Alertmanager),
+> Vault (3-node HA), and ArgoCD** — all PVC data wiped, no backup.
+>
+> **`gdragon` is now a control/jump host:** it runs Ansible + Terraform
+> against the ESXi cluster and is slated to serve **DNS** (for now). It has
+> a standalone `kubectl` (v1.36.2) and a pruned `~/.kube/config` containing
+> only the `homelab` context — the dead `k3os-local` context was removed.
+>
+> **All applications now target the ESXi `homelab` cluster.** Every diagram
+> and table below that shows monitoring / Vault / ArgoCD / NodePorts on
+> `192.168.1.181` is **historical** and pending a redeploy onto ESXi. The
+> edge proxy on `.203` still points at those dead `gdragon` NodePorts until
+> the apps are re-hosted.
+
+State of the *ESXi* tier as of 2026-05-17; `gdragon` row updated 2026-06-19.
+Spans **three physical machines** plus 9 VMs:
 
 | Tier | Hardware | Hosts |
 |---|---|---|
 | **ESXi hypervisor** | HP Z620, 192.168.1.174, ESXi 6.7 | 9 homelab VMs (k8s + LBs + vault-server) |
-| **Workstation (k3s + monitoring + Vault + ArgoCD)** | `gdragon`, 192.168.1.181, Rocky 9 | local k3s, kube-prometheus-stack, Loki, Vault (HA shape) |
-| **Edge / reverse proxy** | `gdragon-ubuntu`, 192.168.1.203, Ubuntu 24.04 | 2 podman nginx containers — path-based proxy for everything above |
+| **Control / jump host (+ DNS)** | `gdragon`, 192.168.1.181, Rocky 9 | Ansible + Terraform control node, standalone kubectl→homelab, DNS server (planned). *Local k3s removed 2026-06-19.* |
+| **Edge / reverse proxy** | `gdragon-ubuntu`, 192.168.1.203, Ubuntu 24.04 | 2 podman nginx containers — path-based proxy (backends stale pending app redeploy to ESXi) |
 
 ---
 
@@ -27,10 +45,10 @@ State as of 2026-05-17. Spans **three physical machines** plus 9 VMs:
 └─────────────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────────────┐
-│  gdragon (192.168.1.181)  — workstation, runs k3s + ansible             │
+│  gdragon (192.168.1.181)  — CONTROL / JUMP HOST (+ DNS planned)         │
 │  Rocky 9, LVM /var grew from 28G → 128G (added /dev/sdb 100G)           │
-│  k3s 1.34.3 (single-node), Calico CNI (IPPool 192.168.0.0/16 ⚠ overlap) │
-│   workloads in argocd + monitoring + vault + calico-system namespaces   │
+│  Ansible + Terraform control node; standalone kubectl v1.36.2 → homelab │
+│  Local k3s (monitoring/Vault/ArgoCD) REMOVED 2026-06-19                 │
 └─────────────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -579,12 +597,13 @@ to password manager and remove from disk.
 - persistent storage on homelab cluster (no SC, no PV provisioner — only emptyDir)
 - backup / etcd snapshot strategy
 - vSphere vCenter (single ESXi host only)
-- Calico IPPool migration on local k3s (current 192.168.0.0/16 overlaps the
-  home network; workstation-level MASQUERADE rule unsticks pod→external but
-  pod-to-pod between Vault replicas still broken)
-- Per-app sub-path config so Grafana/Prometheus/ArgoCD work through the
-  nginx proxy (see "Edge / reverse proxy" table above)
-- Vault auto-unseal (manual key entry today)
+- monitoring / Vault / ArgoCD **redeploy onto the ESXi `homelab` cluster**
+  (these ran on the now-decommissioned local k3s — see the topology-change
+  banner at the top). Until redeployed, the `.203` edge proxy backends for
+  Grafana/Prometheus/Loki/Vault/ArgoCD point at dead `gdragon` NodePorts.
+- DNS service on `gdragon` (planned role for the repurposed jump host;
+  homelab VMs currently resolve via dnsmasq HA on lb1/lb2)
+- Vault auto-unseal (was manual key entry; moot until Vault is re-hosted)
 
 ---
 
@@ -892,9 +911,10 @@ ports / VIP all live in `ansible/group_vars/all/vars.yml`.
 
 - Cluster fully up: 6 nodes Ready, Calico installed and BGP-converged,
   Istio control plane Ready.
-- Kubeconfig pulled to workstation at `~/.kube/config` (context `homelab`,
-  alongside existing `k3os-local` for local image builds). See
-  `scripts/fetch-kubeconfig.sh` and [operations.md](operations.md).
+- Kubeconfig on the jump host at `~/.kube/config` — **`homelab` context
+  only** (the `k3os-local` context was pruned when local k3s was removed
+  2026-06-19). `kubectl` is now a standalone v1.36.2 binary, not the old
+  k3s symlink. See `scripts/fetch-kubeconfig.sh` and [operations.md](operations.md).
 - Open: ingress gateway external IP is `<pending>` (no MetalLB / cloud
   LB), persistent storage class not provisioned, etcd snapshot strategy
   not in place.

@@ -2,27 +2,34 @@
 
 This file provides orientation for anyone (human or AI agent) working with code in this repository.
 
-## Resume here — current state (last verified 2026-05-18)
+## Resume here — current state (last verified 2026-06-19)
 
 A new session should start by reading this section, then `docs/infra-implementation-notes.md`
 (the single-file build-from-scratch runbook). Everything below is the result of recent work;
 treat dates and tag/SHA references as accurate at the time stamped.
 
+> **Topology change 2026-06-19:** the single-node **k3s on `gdragon` (.181) was
+> uninstalled** and the host repurposed as a **control / jump host** (Ansible +
+> Terraform) that will also serve **DNS**. The monitoring stack, **Vault (3-node
+> HA)**, and **ArgoCD** that ran on it are **gone** (PVCs wiped, no backup) and
+> are to be **redeployed onto the ESXi `homelab` cluster**. `kubectl` on gdragon
+> is now a standalone v1.36.2 binary; `~/.kube/config` holds only the `homelab`
+> context (the `k3os-local` context was pruned).
+
 ### Verified working (smoke-tested end-to-end)
 - **Homelab k8s cluster**: all 6 nodes Ready (3 masters + 3 workers, v1.36.1). Calico v3.30.4 healthy, APIService `v3.projectcalico.org` True. k8s API via VIP `192.168.1.50:6443` responding.
 - **HA LB pair** (lb1 MASTER prio 101, lb2 BACKUP prio 100): keepalived VIP `192.168.1.50` plus dnsmasq for `myhomelab.com`. Failover ~3 s.
-- **Local k3s on gdragon** (192.168.1.181): monitoring stack + ArgoCD + Vault all up. cross-cluster `remote_write` from homelab Prometheus into local Prometheus :30320, Promtail DaemonSets on both clusters pushing to local Loki :30310.
-- **Vault**: `vault-0` is the Raft leader (initialized, unsealed). `vault-2` raft-joined. **`vault-1` is CrashLoopBackOff** (Calico IPPool overlap blocks its pod IP — known limitation, not a regression).
-- **Edge nginx proxy on .203** at `quay.io/bpraisa/nginx:homelab-proxy-1.4`. All six paths return 2xx through `http://192.168.1.203/`:
-  - `/` (landing), `/grafana/`, `/prometheus/`, `/loki/ready`, `/argocd/`, `/ui/` (Vault — root-mounted because the SPA has no sub-path mode).
+- **gdragon jump host** (192.168.1.181): standalone `kubectl` reaches the `homelab` cluster from a fresh login shell; Ansible inventory + vault-pass in place (note: `ansible.cfg` is ignored because the repo dir is group-writable — export `ANSIBLE_CONFIG=$PWD/ansible.cfg` when running playbooks).
+- **Edge nginx proxy on .203** at `quay.io/bpraisa/nginx:homelab-proxy-1.4` still runs, but its `/grafana/ /prometheus/ /loki/ /ui/ /argocd/` backends point at the **now-dead gdragon NodePorts** — only `/` (landing) is meaningful until the apps are re-hosted on ESXi.
 
 ### Open items
-- **Vault-1 raft-join** — blocked by Calico IPPool `192.168.0.0/16` overlapping with home LAN `192.168.1.0/24` on the local k3s. Workaround `k3s-pod-masq.service` (systemd) is already running. Proper fix is a destructive IPPool migration; see `vault/README.md`.
+- **Redeploy monitoring + Vault + ArgoCD onto the ESXi `homelab` cluster** — these were lost with the local k3s. Repo still has the manifests/values (`monitoring/`, `vault/`, `argocd/`) but they were written for the k3s NodePort layout; they need a PV provisioner + ingress story on homelab first.
+- **DNS on gdragon** — planned role for the jump host (not yet installed; homelab VMs currently resolve via dnsmasq HA on lb1/lb2).
+- **K8s hardening (WIP, uncommitted)** — `ansible/playbooks/k8s_{harden,audit}.yml` + `ansible/files/k8s_harden/` were written and validated (merge produces a valid v1beta4 manifest) but **not yet applied** to the live cluster. `k8s_audit.yml` has a bad image tag (`aquasec/kube-bench:v0.11.4` does not exist — pick a real tag before running).
 - **Istio ingressgateway externally exposed** — `LoadBalancer` Service pending; no MetalLB on the homelab cluster yet.
 - **ESXi NTP / clock drift** — host clock drifts; VMs absorb it on boot. `all_powerup.yml` runs `chronyc makestep` to recover; the host itself still needs proper NTP setup.
 - **etcd snapshot strategy** — none yet.
 - **Persistent storage class on homelab cluster** — no PV provisioner yet (local-path or NFS).
-- **`~/.vault/init.json` on disk** — should move to a password manager. Currently chmod 600 on gdragon.
 - **Rename ESXi VM directory** — lb2's display name is `lb2` but the on-disk path is still `datastore1/dns1/` (cosmetic).
 
 ### Recent significant changes (commit refs on `main`)
@@ -36,20 +43,18 @@ treat dates and tag/SHA references as accurate at the time stamped.
 ```bash
 cd /apps/git-code/git-vsphere
 
-# Cluster reachable?
-kubectl --context homelab get nodes
-kubectl --context k3os-local get pods -A | grep -v Running | grep -v Completed
+# Cluster reachable from the jump host? (homelab is the only context now)
+kubectl get nodes                       # → 6 Ready
 
-# Proxy URLs answering?
-for p in / /grafana/ /prometheus/ /loki/ready /ui/ /argocd/; do
-  printf "%-22s %s\n" "$p" "$(curl -sSL -o /dev/null -w '%{http_code}' http://192.168.1.203$p)"
-done
+# Edge proxy landing page still up? (app backends are dead pending redeploy)
+curl -sSL -o /dev/null -w '%{http_code}\n' http://192.168.1.203/
 
-# Vault leader still unsealed?
-kubectl --context k3os-local -n vault exec vault-0 -- vault status | grep -E "Sealed|HA Mode"
+# Ansible can reach the cluster VMs? (note the ANSIBLE_CONFIG export — the
+# repo dir is group-writable so ansible.cfg is otherwise ignored)
+cd ansible && ANSIBLE_CONFIG=$PWD/ansible.cfg ansible k8s_masters,k8s_workers -m ping
 ```
 
-If anything fails: `docs/operations.md` has the recovery playbooks (incl. ESXi maintenance-mode and Vault unseal). For a totally cold rebuild: `docs/infra-implementation-notes.md`.
+If anything fails: `docs/operations.md` has the recovery playbooks (incl. ESXi maintenance-mode). For a totally cold rebuild: `docs/infra-implementation-notes.md`.
 
 ---
 
