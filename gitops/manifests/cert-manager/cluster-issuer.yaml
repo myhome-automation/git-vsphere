@@ -1,0 +1,36 @@
+# Internal PKI for biplextech.com: a self-signed root bootstraps a long-lived
+# CA, which becomes the cluster-wide `biplextech-ca` ClusterIssuer that every
+# workload requests certs from. Synced by the cert-manager-issuers Application
+# (sync-wave 2) AFTER cert-manager's CRDs + webhook are ready.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: selfsigned-bootstrap
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: biplextech-ca
+  namespace: cert-manager
+spec:
+  isCA: true
+  commonName: biplextech.com internal CA
+  secretName: biplextech-ca-key-pair
+  duration: 87600h # 10 years
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: selfsigned-bootstrap
+    kind: ClusterIssuer
+    group: cert-manager.io
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: biplextech-ca
+spec:
+  ca:
+    secretName: biplextech-ca-key-pair

@@ -1,0 +1,29 @@
+# Single cluster ingress controller. Exposed as NodePort so the external
+# lb1/lb2 nginx API gateway (behind keepalived VIP 192.168.1.50) can forward
+# all *.biplextech.com traffic here. TLS is terminated at the external nginx;
+# inside the cluster this listens HTTP and host-routes via Ingress objects.
+controller:
+  kind: Deployment
+  replicaCount: 2
+  service:
+    type: NodePort
+    nodePorts:
+      http: 32080
+      https: 32443
+  ingressClassResource:
+    name: nginx
+    default: true
+  config:
+    use-forwarded-headers: "true"
+    proxy-body-size: "50m"
+    # Trust the external gateway's X-Forwarded-* headers.
+    proxy-real-ip-cidr: "192.168.1.0/24"
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits:   { memory: 256Mi }
+  metrics:
+    enabled: true
+  admissionWebhooks:
+    enabled: true
+defaultBackend:
+  enabled: false

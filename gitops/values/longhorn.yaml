@@ -1,0 +1,23 @@
+# Longhorn replicated block storage — the cluster's default StorageClass.
+# 3 workers; replica count 2 to balance redundancy against the tight disk budget.
+persistence:
+  defaultClass: true
+  defaultClassReplicaCount: 2
+  reclaimPolicy: Retain
+defaultSettings:
+  defaultReplicaCount: 2
+  defaultDataPath: /var/lib/longhorn
+  storageMinimalAvailablePercentage: 15
+service:
+  ui:
+    type: ClusterIP
+# Path-based behind the edge gateway: https://biplextech.com/longhorn
+# Longhorn UI has no native sub-path, so strip the prefix at the ingress.
+ingress:
+  enabled: true
+  ingressClassName: nginx
+  host: biplextech.com
+  path: /longhorn(/|$)(.*)
+  pathType: ImplementationSpecific
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /$2

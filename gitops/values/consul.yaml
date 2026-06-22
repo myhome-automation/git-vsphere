@@ -1,0 +1,35 @@
+# Consul (Connect) — service mesh + service discovery + KV. Replaces Istio.
+global:
+  name: consul
+  datacenter: biplextech
+  tls:
+    enabled: false
+  metrics:
+    enabled: true
+server:
+  replicas: 3
+  storageClass: longhorn
+  storage: 3Gi
+  affinity: "" # only 3 workers — relax hard anti-affinity
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits:   { memory: 512Mi }
+# Connect service mesh (opt-in per workload via annotation; not default-on).
+connectInject:
+  enabled: true
+  default: false
+ui:
+  enabled: true
+  service:
+    type: ClusterIP
+  # Path-based: https://biplextech.com/consul (UI sub-path via ingress rewrite).
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    pathType: ImplementationSpecific
+    annotations: |
+      nginx.ingress.kubernetes.io/rewrite-target: /$2
+    hosts:
+      - host: biplextech.com
+        paths:
+          - /consul(/|$)(.*)

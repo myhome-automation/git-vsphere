@@ -1,0 +1,80 @@
+# kube-prometheus-stack — Prometheus + Grafana + Alertmanager.
+# Resource-constrained for the 24 GB worker pool: short retention, single
+# replicas. All three UIs path-based behind the edge gateway on biplextech.com.
+prometheus:
+  prometheusSpec:
+    retention: 7d
+    replicas: 1
+    routePrefix: /prometheus
+    externalUrl: https://biplextech.com/prometheus
+    resources:
+      requests: { cpu: 200m, memory: 768Mi }
+      limits:   { memory: 1536Mi }
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: longhorn
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 15Gi
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    hosts: ["biplextech.com"]
+    paths: ["/prometheus"]
+    pathType: Prefix
+
+grafana:
+  replicas: 1
+  adminPassword: changeme-biplextech # bootstrap only — rotate via Vault/VSO
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits:   { memory: 256Mi }
+  persistence:
+    enabled: true
+    storageClassName: longhorn
+    size: 5Gi
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    hosts: ["biplextech.com"]
+    path: /grafana
+    pathType: Prefix
+  grafana.ini:
+    server:
+      domain: biplextech.com
+      root_url: "https://biplextech.com/grafana"
+      serve_from_sub_path: true
+
+alertmanager:
+  alertmanagerSpec:
+    replicas: 1
+    routePrefix: /alertmanager
+    externalUrl: https://biplextech.com/alertmanager
+    resources:
+      requests: { cpu: 20m, memory: 64Mi }
+      limits:   { memory: 128Mi }
+    storage:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: longhorn
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 2Gi
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    hosts: ["biplextech.com"]
+    paths: ["/alertmanager"]
+    pathType: Prefix
+
+# kube-proxy metrics bind to 127.0.0.1 on kubeadm by default — skip to avoid
+# noisy "down" targets.
+kubeProxy:
+  enabled: false
+prometheusOperator:
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits:   { memory: 256Mi }

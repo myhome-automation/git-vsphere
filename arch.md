@@ -22,12 +22,17 @@ Context `homelab`. **No StorageClass yet. No LB controller (by design — extern
 
 - [x] Decisions locked (§2) + design doc written (`docs/platform-architecture.md`)
 - [x] `arch.md` resume anchor created + pushed
+- [x] **GitOps tree authored** (`gitops/`): bootstrap (project + root-app +
+      argocd values), 10 app-of-apps Applications waves 0–8, path-based values,
+      cert-manager issuers + biplextech cert. Pinned chart versions. **Not yet
+      applied** — needs ArgoCD bootstrap on the live cluster.
 - [ ] **NEXT →** Repurpose `vault-server` .202 as `biplextech.com` DNS (`dns_biplextech.yml`)
 - [ ] Remove Istio (`istio_remove.yml`)
 - [ ] Apply kubeadm hardening + fix kube-bench tag + run audit
-- [ ] Longhorn node prereqs + ArgoCD bootstrap + GitOps app-of-apps tree
-- [ ] External HAProxy/nginx VIP vhosts for `*.biplextech.com`
-- [ ] Wave 0–9 apps reconciled & verified (Longhorn → Jenkins)
+- [ ] `longhorn_prereqs.yml` + `argocd_bootstrap.yml` → reconcile waves 0–8
+- [ ] Edge gateway: lb1/lb2 nginx (TLS + path routing) + VIP → ingress-nginx
+      (`edge_gateway.yml`); distribute biplextech.com CA cert
+- [ ] Wave 0–8 apps reconciled & verified (Longhorn → Jenkins); Vault init/unseal
 
 **Known blockers to clear before any stateful app:**
 1. No storage → Longhorn (wave 0) must be `Healthy` first.
@@ -64,18 +69,28 @@ A bare kubeadm cluster → a **GitOps-managed internal platform**:
 - **Vault in-cluster HA (Raft, 3 replicas)**, PVCs on Longhorn.
 - **`vault-server` VM (.202) repurposed → authoritative DNS** for `biplextech.com`.
 - **Workers stay at 8 GB** (no resize) — budget enforced via requests/limits.
-- **Ingress = external HAProxy + 2× nginx + keepalived VIP → NodePorts** (no MetalLB).
+- **Edge = lb1/lb2 nginx + HAProxy + keepalived VIP `.50`**, TLS-terminating
+  (cert from the `biplextech.com` internal CA), **path-based** on a single host
+  `https://biplextech.com/<app>`, forwarding to the in-cluster **ingress-nginx**
+  (NodePort 32080). No MetalLB.
 - **ArgoCD first; everything else through ArgoCD** by sync-wave.
 
 ## 3. Topology
 
 ```
-client → *.biplextech.com
-   │  DNS (authoritative) on 192.168.1.202  →  A/wildcard 192.168.1.50
+client → https://biplextech.com/<app>
+   │  DNS (authoritative) on 192.168.1.202  →  biplextech.com A 192.168.1.50
    ▼
-keepalived VIP 192.168.1.50   (HAProxy on lb1 MASTER / lb2 BACKUP + nginx vhosts)
+keepalived VIP 192.168.1.50   (lb1 MASTER / lb2 BACKUP)
+   │  nginx API gateway: TLS terminate (biplextech.com CA cert) + path route
    ▼
-cluster NodePorts (kworker1-3 :3xxxx)  →  ClusterIP  →  pods
+ingress-nginx NodePort 32080 (kworker1-3)  →  Ingress host-route by path
+   ▼
+ClusterIP service (sub-path configured)  →  pods
+
+Path map (single host https://biplextech.com):
+  /argocd /grafana /prometheus /alertmanager /jenkins  (native sub-path)
+  /longhorn /vault /consul                             (ingress rewrite)
 
 Inventory:
   masters   kmaster1-3   .186/.189/.187   4 GB

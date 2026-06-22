@@ -1,0 +1,24 @@
+# Server cert for the platform, signed by the biplextech.com internal CA.
+# Consumed by the edge nginx gateway (lb1/lb2) for HTTPS termination — exported
+# from this secret to the LB hosts by ansible/playbooks/edge_gateway.yml. Also
+# available in-cluster if end-to-end TLS to the ingress is enabled later.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: biplextech-tls
+  namespace: ingress-nginx
+spec:
+  secretName: biplextech-tls
+  duration: 8760h    # 1 year
+  renewBefore: 720h  # 30 days
+  commonName: biplextech.com
+  dnsNames:
+    - biplextech.com
+    - "*.biplextech.com"
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: biplextech-ca
+    kind: ClusterIssuer
+    group: cert-manager.io

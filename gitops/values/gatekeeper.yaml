@@ -1,0 +1,16 @@
+# OPA Gatekeeper — policy-as-code. Starts in AUDIT mode: constraints authored
+# later with enforcementAction: dryrun, flipped to deny after a clean audit cycle.
+# No UI, so no ingress.
+replicas: 1
+audit:
+  replicas: 1
+  resources:
+    requests: { cpu: 50m, memory: 256Mi }
+    limits:   { memory: 512Mi }
+controllerManager:
+  resources:
+    requests: { cpu: 50m, memory: 256Mi }
+    limits:   { memory: 512Mi }
+# Fail-open while we tune policies so a webhook outage can't block the cluster.
+validatingWebhookFailurePolicy: Ignore
+mutatingWebhookFailurePolicy: Ignore

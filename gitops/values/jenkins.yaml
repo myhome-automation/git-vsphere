@@ -1,0 +1,31 @@
+# Jenkins — CI. Controller + ephemeral k8s agents (no idle executors) to keep
+# the resource footprint small. Path-based: https://biplextech.com/jenkins
+controller:
+  replicas: 1
+  resources:
+    requests: { cpu: 200m, memory: 512Mi }
+    limits:   { memory: 1Gi }
+  serviceType: ClusterIP
+  jenkinsUriPrefix: /jenkins
+  jenkinsUrl: https://biplextech.com/jenkins
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    hostName: biplextech.com
+    path: /jenkins
+  installPlugins:
+    - kubernetes
+    - workflow-aggregator
+    - git
+    - configuration-as-code
+  adminUser: admin
+  adminPassword: changeme-biplextech # bootstrap only — rotate via Vault/VSO
+persistence:
+  enabled: true
+  storageClass: longhorn
+  size: 8Gi
+agent:
+  enabled: true
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits:   { memory: 512Mi }

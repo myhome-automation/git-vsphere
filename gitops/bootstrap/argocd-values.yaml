@@ -1,0 +1,60 @@
+# ArgoCD Helm values (chart argo-cd 9.7.0, appVersion v3.4.4).
+# Installed ONCE by ansible/playbooks/argocd_bootstrap.yml, then ArgoCD manages
+# itself. Non-HA, resource-constrained. TLS terminates at the edge gateway, so
+# the server runs insecure (plain HTTP). Path-based at https://biplextech.com/argocd
+# — NodePort 30080 is kept as a bootstrap fallback before the edge is wired.
+
+global:
+  domain: biplextech.com
+
+configs:
+  params:
+    server.insecure: true
+    server.rootpath: /argocd
+    server.basehref: /argocd
+  cm:
+    url: https://biplextech.com/argocd
+    # Register this (private) git repo here or via `argocd repo add`.
+
+dex:
+  enabled: false
+notifications:
+  enabled: false
+
+controller:
+  replicas: 1
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits:   { memory: 1Gi }
+
+repoServer:
+  replicas: 1
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits:   { memory: 512Mi }
+
+applicationSet:
+  replicas: 1
+  resources:
+    requests: { cpu: 20m, memory: 64Mi }
+    limits:   { memory: 128Mi }
+
+redis:
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits:   { memory: 128Mi }
+
+server:
+  replicas: 1
+  service:
+    type: NodePort
+    nodePortHttp: 30080
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    hostname: biplextech.com
+    path: /argocd
+    pathType: Prefix
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits:   { memory: 256Mi }
