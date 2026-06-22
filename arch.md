@@ -45,6 +45,17 @@ tag (`v0.11.4` — use a real one, e.g. `v0.15.6`).
 
 ---
 
+## 0.1 Scope — everything inside ESXi
+
+All platform components run **inside the ESXi host** (the 9 homelab VMs). The edge
+gateway is **lb1/lb2 (ESXi VMs)** + keepalived VIP `.50`. The external **Ubuntu
+edge box (`gdragon-edge` 192.168.1.203)** and the **gdragon workstation/k3s** are
+**out of scope** and not used by this build — no GitOps app or new playbook targets
+them. (`edge_gateway.yml` targets the `loadbalancers` inventory group, not
+`edge_proxy`.) The old k3s-era `monitoring/`, root `argocd/`, `vault/`, and
+`nginx-proxy/` dirs are legacy and will be retired once the in-cluster equivalents
+are verified.
+
 ## 1. What we are building
 
 A bare kubeadm cluster → a **GitOps-managed internal platform**:
