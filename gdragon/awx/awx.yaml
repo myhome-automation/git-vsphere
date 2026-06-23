@@ -1,0 +1,57 @@
+---
+# AWX instance for gdragon mgmt/security k3s (arch.md §8).
+# Deployed by the awx-operator (installed via Helm into ns 'awx').
+# Resource limits are deliberately tight: gdragon is a 2-core / 7.5 GB host
+# shared with OpenVAS, backed by an 8 GB swapfile (see arch.md §8).
+apiVersion: awx.ansible.com/v1beta1
+kind: AWX
+metadata:
+  name: awx
+  namespace: awx
+spec:
+  # NodePort gives immediate access via 192.168.1.181:<port> without
+  # depending on the homelab.com DNS zone (still pending — arch.md §9).
+  # Switch to ingress_type: ingress + hostname awx.homelab.com once DNS is live.
+  service_type: nodeport
+  nodeport_port: 30080
+
+  # admin password lands in secret awx-admin-password (auto-generated).
+  admin_user: admin
+
+  # Postgres PVC on the k3s default local-path StorageClass.
+  postgres_storage_class: local-path
+  postgres_storage_requirements:
+    requests:
+      storage: 8Gi
+
+  # --- resource caps so AWX cannot starve the host / OpenVAS ---
+  # NOTE: k8s pods cannot use host swap by default (kubelet sets
+  # memory.swap.max=0 per container), so these limits must hold the real
+  # working set. Host swap (8 GB) only frees RAM by paging out the
+  # workstation baseline. 1Gi OOM-killed awx-web on first boot.
+  web_resource_requirements:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      memory: 2Gi
+  task_resource_requirements:
+    requests:
+      cpu: 100m
+      memory: 384Mi
+    limits:
+      memory: 1536Mi
+  ee_resource_requirements:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      memory: 512Mi
+  postgres_resource_requirements:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      memory: 512Mi
+  # single replica — this is a mgmt box, not HA
+  replicas: 1

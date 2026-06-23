@@ -57,8 +57,12 @@ currently still uses `biplextech.com`. See §9.
 - [ ] Edge gateway: lb1/lb2 nginx (TLS + path routing) + VIP → ingress-nginx
       (`edge_gateway.yml`); distribute biplextech.com CA cert
 - [ ] Wave 0–8 apps reconciled & verified (Longhorn → Jenkins); Vault init/unseal
-- [ ] **gdragon mgmt/security (§8):** k3s already installed+enabled (verify node
-      Ready) → deploy AWX (AWX Operator) + OpenVAS/GVM, both on k3s.
+- [x] **gdragon mgmt/security (§8) DEPLOYED:** k3s node `gdragon` Ready (v1.35.5).
+      **AWX** live via awx-operator 2.19.1 (AWX 24.6.1) — NodePort
+      `http://192.168.1.181:30080`, web+task+postgres Running. **OpenVAS/GVM** live
+      (immauss/openvas, ns `security`) — NodePort `http://192.168.1.181:30443`,
+      1/1 Ready, feeds synced+persisted on PVC. Admin creds for both set live (not
+      in git). Manifests: `gdragon/awx/awx.yaml`, `gdragon/openvas/openvas.yaml`.
 - [ ] **Domain split (§9):** stand up `homelab.com` (internal) + `biplextech.com`
       (external) two-zone DNS on .202 + CNAME bridge; migrate internal names off
       `biplextech.com` (DNS, cert SANs, gitops values).
@@ -230,13 +234,22 @@ Decisions / rationale:
 
 Install order (to script as `ansible/playbooks/gdragon_secops.yml`, **not yet
 written / not run**):
-1. ✅ k3s single-node **already installed + enabled** on gdragon (auto-starts on
-   boot). ⚠ `sudo k3s kubectl get nodes` returned no rows on 2026-06-22 — verify the
-   node is Ready on resume before deploying. Use `KUBECONFIG=/etc/rancher/k3s/k3s.yaml`.
-   (Decide: keep firewalld vs disable; k3s uses flannel by default — fine here.)
-2. `awx-operator` via Helm → `AWX` CR (admin secret, NodePort/Ingress).
-3. OpenVAS/GVM Deployment + PVC (feed sync is heavy — size the PV; first sync slow).
-4. Expose via k3s Traefik ingress under the internal domain (§9):
+1. ✅ k3s single-node installed + enabled on gdragon — node `gdragon` **Ready**
+   (v1.35.5, 2026-06-23). `k3s` binary at `/usr/local/bin/k3s`; sudo's `secure_path`
+   excludes `/usr/local/bin`, so call it by full path:
+   `sudo /usr/local/bin/k3s kubectl ...` (or `KUBECONFIG=/etc/rancher/k3s/k3s.yaml`).
+2. ✅ **AWX deployed** — awx-operator 2.19.1 via Helm → `AWX` CR (`gdragon/awx/awx.yaml`),
+   ns `awx`, NodePort `192.168.1.181:30080`, AWX 24.6.1. admin password set live
+   (awx-manage update_password + synced `awx-admin-password` secret) — not in git.
+3. ✅ **OpenVAS/GVM deployed** — immauss/openvas single-container (`gdragon/openvas/openvas.yaml`),
+   ns `security`, NodePort `192.168.1.181:30443`, 1/1 Ready. Feeds synced + persisted
+   on the 25Gi `openvas-data` PVC. admin password set live via `gvmd --new-password`
+   (run as the `gvm` user — gvmd/gvm-cli refuse to run as root) — not in git. The
+   committed manifest keeps a placeholder `PASSWORD` ("change after first login");
+   the immauss image re-applies `$PASSWORD` from the secret on every boot, so the
+   live secret value survives a pod restart but a re-`apply` of the manifest would
+   reset it to the placeholder.
+4. TODO: expose via k3s Traefik ingress under the internal domain (§9):
    `awx.homelab.com`, `openvas.homelab.com`.
 
 ⚠ Open items for next session: OpenVAS/GVM image choice (single-container vs split

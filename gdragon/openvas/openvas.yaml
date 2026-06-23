@@ -1,0 +1,92 @@
+---
+# OpenVAS / GVM on gdragon mgmt/security k3s (arch.md §8) — the sole scanner.
+# Single-container community image (immauss/openvas): bundles gvmd, ospd-openvas,
+# gsad (web UI on 9392), redis and postgres in one container with all state on
+# /data. Chosen over the split greenbone/* compose stack for simplicity on a
+# single-node box. NOTE: the first NVT/SCAP feed sync is large and slow
+# (tens of minutes to hours) and CPU/RAM heavy — expected on first boot.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: security
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: openvas-data
+  namespace: security
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 25Gi          # feeds + DB; /var has ~86 GB free
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: openvas-admin
+  namespace: security
+type: Opaque
+stringData:
+  # change after first login
+  USERNAME: admin
+  PASSWORD: "ChangeMe-gdragon-2026"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openvas
+  namespace: security
+  labels: { app: openvas }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }          # single RWO volume
+  selector:
+    matchLabels: { app: openvas }
+  template:
+    metadata:
+      labels: { app: openvas }
+    spec:
+      containers:
+        - name: openvas
+          image: immauss/openvas:26.06.21.01
+          imagePullPolicy: IfNotPresent
+          ports:
+            - { name: web, containerPort: 9392 }
+          envFrom:
+            - secretRef: { name: openvas-admin }
+          env:
+            - { name: SKIPSYNC, value: "false" }   # do the feed sync on first boot
+            - { name: RELAYHOST, value: "" }
+          volumeMounts:
+            - { name: data, mountPath: /data }
+          resources:
+            requests:
+              cpu: 250m
+              memory: 1Gi
+            limits:
+              memory: 3Gi          # capped so it can't take the whole host
+          readinessProbe:
+            tcpSocket: { port: 9392 }
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            failureThreshold: 60     # tolerate the long first feed sync
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: openvas-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: openvas
+  namespace: security
+spec:
+  type: NodePort
+  selector: { app: openvas }
+  ports:
+    - name: web
+      port: 9392
+      targetPort: 9392
+      nodePort: 30443
