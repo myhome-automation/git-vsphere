@@ -18,3 +18,4 @@ packer/*.pkrvars.hcl
 .env
 *.pem
 *.key
+__pycache__/

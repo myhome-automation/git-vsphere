@@ -1,0 +1,391 @@
+---
+# k8s_harden.yml
+#
+# Production-grade hardening for the existing kubeadm cluster.
+# Idempotent — safe to re-run. Rolling across masters one at a time so
+# the control plane never loses quorum.
+#
+# Items applied:
+#   1. Secrets encryption at rest (aescbc provider). Key file at
+#      /etc/kubernetes/enc/encryption.yaml, mirrored across all masters
+#      (kmaster1 generates, kmaster2/3 receive). Existing secrets get
+#      rewritten in-place at the end so they pick up the encrypted path.
+#   2. Audit logging. Policy at /etc/kubernetes/audit/policy.yaml; logs
+#      to /var/log/kubernetes/audit/audit.log with 100MiB/10-file rotation.
+#   3. kubelet hardening. readOnlyPort 0, protectKernelDefaults true,
+#      eventRecordQPS 5, tlsCipherSuites pinned. Rolling per node.
+#   4. PodSecurity admission. AdmissionConfiguration sets cluster-wide
+#      default to `restricted`; kube-system / calico-* / istio-system
+#      exempted. Existing namespaces also get explicit labels for clarity.
+#
+# Flow:
+#   Play 1: prepare config files on every master (encryption key only on
+#           kmaster1, then fetched + redistributed).
+#   Play 2: merge ClusterConfiguration with hardening extras, write back
+#           to the kubeadm-config ConfigMap (so future kubeadm operations
+#           preserve the changes).
+#   Play 3: regenerate kube-apiserver static-pod manifest on each master
+#           via `kubeadm init phase control-plane apiserver`. serial:1
+#           with health-gate between nodes.
+#   Play 4: kubelet hardening, masters first then workers, serial:1.
+#   Play 5: label namespaces with PSA + rewrite existing secrets so they
+#           land in the encrypted store.
+#
+# Usage:
+#   cd ansible/
+#   ansible-playbook -i inventory/hosts.ini --vault-password-file=.vault_pass \
+#     playbooks/k8s_harden.yml
+#
+# Rollback notes (per item): see docs/k8s-hardening.md.
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Play 1: stage config files on every master
+# ─────────────────────────────────────────────────────────────────────────────
+- name: k8s_harden | stage encryption key on kmaster1
+  hosts: kmaster1
+  become: true
+  tasks:
+    - name: ensure /etc/kubernetes/enc exists
+      file:
+        path: /etc/kubernetes/enc
+        state: directory
+        owner: root
+        group: root
+        mode: '0700'
+
+    - name: check if encryption config already present
+      stat:
+        path: /etc/kubernetes/enc/encryption.yaml
+      register: enc_cfg
+
+    # One-time key generation. Rotating the key requires re-encrypting all
+    # secrets cluster-wide and is out of scope for this playbook — see
+    # docs/k8s-hardening.md "Key rotation".
+    - name: generate encryption key (one-time)
+      shell: |
+        umask 077
+        KEY=$(head -c 32 /dev/urandom | base64)
+        cat > /etc/kubernetes/enc/encryption.yaml <<EOF
+        apiVersion: apiserver.config.k8s.io/v1
+        kind: EncryptionConfiguration
+        resources:
+          - resources:
+              - secrets
+            providers:
+              - aescbc:
+                  keys:
+                    - name: key1
+                      secret: ${KEY}
+              - identity: {}
+        EOF
+        chmod 0600 /etc/kubernetes/enc/encryption.yaml
+      when: not enc_cfg.stat.exists
+      no_log: true
+
+    - name: fetch encryption config to controller (for redistribution)
+      fetch:
+        src: /etc/kubernetes/enc/encryption.yaml
+        dest: /tmp/k8s_harden_encryption.yaml
+        flat: true
+
+- name: k8s_harden | mirror encryption key to other masters
+  hosts: kmaster2,kmaster3
+  become: true
+  tasks:
+    - name: ensure /etc/kubernetes/enc exists
+      file:
+        path: /etc/kubernetes/enc
+        state: directory
+        owner: root
+        group: root
+        mode: '0700'
+
+    - name: copy encryption config from controller
+      copy:
+        src: /tmp/k8s_harden_encryption.yaml
+        dest: /etc/kubernetes/enc/encryption.yaml
+        owner: root
+        group: root
+        mode: '0600'
+
+- name: k8s_harden | audit + admission + helper files on every master
+  hosts: k8s_masters
+  become: true
+  tasks:
+    - name: ensure audit + admission dirs exist
+      file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: /etc/kubernetes/audit, mode: '0700' }
+        - { path: /etc/kubernetes/admission, mode: '0700' }
+        - { path: /var/log/kubernetes/audit, mode: '0700' }
+        - { path: /opt/k8s_harden, mode: '0755' }
+
+    - name: install audit policy
+      copy:
+        src: ../files/k8s_harden/audit-policy.yaml
+        dest: /etc/kubernetes/audit/policy.yaml
+        owner: root
+        group: root
+        mode: '0600'
+
+    - name: install admission configuration
+      copy:
+        src: ../files/k8s_harden/admission.yaml
+        dest: /etc/kubernetes/admission/admission.yaml
+        owner: root
+        group: root
+        mode: '0600'
+
+    - name: install merge helper
+      copy:
+        src: ../files/k8s_harden/merge_cluster_config.py
+        dest: /opt/k8s_harden/merge_cluster_config.py
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: install kubelet patch helper
+      copy:
+        src: ../files/k8s_harden/patch_kubelet_config.py
+        dest: /opt/k8s_harden/patch_kubelet_config.py
+        owner: root
+        group: root
+        mode: '0755'
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Play 2: produce hardened ClusterConfiguration + write back to kubeadm-config
+# ─────────────────────────────────────────────────────────────────────────────
+- name: k8s_harden | merge ClusterConfiguration on kmaster1
+  hosts: kmaster1
+  become: true
+  tasks:
+    - name: dump current ClusterConfiguration from kubeadm-config CM
+      shell: >
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf
+        -n kube-system get cm kubeadm-config
+        -o jsonpath='{.data.ClusterConfiguration}'
+        > /opt/k8s_harden/cluster-config.in.yaml
+      changed_when: false
+
+    - name: merge hardening extras into ClusterConfiguration
+      command: >
+        /opt/k8s_harden/merge_cluster_config.py
+        /opt/k8s_harden/cluster-config.in.yaml
+        /opt/k8s_harden/cluster-config.out.yaml
+      changed_when: true
+
+    - name: read merged ClusterConfiguration
+      slurp:
+        src: /opt/k8s_harden/cluster-config.out.yaml
+      register: merged_cc
+
+    # `kubectl patch cm` with the full new value is the cleanest way to
+    # update a ConfigMap key without a jsonpatch dance. The value is
+    # passed via env to avoid quoting hell with embedded newlines.
+    - name: write hardened ClusterConfiguration back to kubeadm-config
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf -n kube-system \
+          create configmap kubeadm-config \
+          --from-file=ClusterConfiguration=/opt/k8s_harden/cluster-config.out.yaml \
+          --dry-run=client -o yaml \
+        | kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f -
+      changed_when: true
+
+    - name: fetch merged config to controller (for distribution)
+      fetch:
+        src: /opt/k8s_harden/cluster-config.out.yaml
+        dest: /tmp/k8s_harden_cluster_config.yaml
+        flat: true
+
+- name: k8s_harden | distribute merged ClusterConfiguration to other masters
+  hosts: kmaster2,kmaster3
+  become: true
+  tasks:
+    - name: copy merged ClusterConfiguration
+      copy:
+        src: /tmp/k8s_harden_cluster_config.yaml
+        dest: /opt/k8s_harden/cluster-config.out.yaml
+        owner: root
+        group: root
+        mode: '0600'
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Play 3: regenerate kube-apiserver static-pod manifest on each master
+# ─────────────────────────────────────────────────────────────────────────────
+- name: k8s_harden | regenerate kube-apiserver manifest (rolling)
+  hosts: k8s_masters
+  become: true
+  serial: 1
+  tasks:
+    - name: back up current kube-apiserver manifest
+      copy:
+        src: /etc/kubernetes/manifests/kube-apiserver.yaml
+        dest: /etc/kubernetes/manifests/.kube-apiserver.yaml.bak-{{ ansible_date_time.epoch }}
+        remote_src: true
+        owner: root
+        group: root
+        mode: '0600'
+      ignore_errors: true
+
+    # `kubeadm init phase control-plane apiserver --config=...` rewrites
+    # the static pod manifest in-place. kubelet auto-restarts the pod.
+    - name: regenerate apiserver static-pod manifest
+      command: >
+        kubeadm init phase control-plane apiserver
+        --config=/opt/k8s_harden/cluster-config.out.yaml
+      changed_when: true
+
+    # /livez doesn't require auth and reflects "is this apiserver healthy
+    # enough to serve". 60 retries x 5s = 5 min hard ceiling.
+    - name: wait for kube-apiserver to be live on this master
+      uri:
+        url: https://127.0.0.1:6443/livez
+        validate_certs: false
+        status_code: 200
+      register: live
+      retries: 60
+      delay: 5
+      until: live.status == 200
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Play 4: kubelet hardening (rolling, masters first then workers)
+# ─────────────────────────────────────────────────────────────────────────────
+- name: k8s_harden | kubelet config on masters
+  hosts: k8s_masters
+  become: true
+  serial: 1
+  tasks:
+    - name: install kubelet patch helper (idempotent re-copy)
+      copy:
+        src: ../files/k8s_harden/patch_kubelet_config.py
+        dest: /opt/k8s_harden/patch_kubelet_config.py
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: ensure /opt/k8s_harden exists (workers may not have it yet)
+      file:
+        path: /opt/k8s_harden
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: patch /var/lib/kubelet/config.yaml
+      command: /opt/k8s_harden/patch_kubelet_config.py /var/lib/kubelet/config.yaml
+      register: kubelet_patch
+      changed_when: kubelet_patch.stdout == "changed"
+
+    - name: restart kubelet if config changed
+      systemd:
+        name: kubelet
+        state: restarted
+      when: kubelet_patch.changed
+
+    - name: wait for kubelet to be ready
+      wait_for:
+        port: 10250
+        host: 127.0.0.1
+        timeout: 60
+      when: kubelet_patch.changed
+
+- name: k8s_harden | kubelet config on workers
+  hosts: k8s_workers
+  become: true
+  serial: 1
+  tasks:
+    - name: ensure /opt/k8s_harden exists
+      file:
+        path: /opt/k8s_harden
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: install kubelet patch helper on worker
+      copy:
+        src: ../files/k8s_harden/patch_kubelet_config.py
+        dest: /opt/k8s_harden/patch_kubelet_config.py
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: patch /var/lib/kubelet/config.yaml
+      command: /opt/k8s_harden/patch_kubelet_config.py /var/lib/kubelet/config.yaml
+      register: kubelet_patch
+      changed_when: kubelet_patch.stdout == "changed"
+
+    - name: restart kubelet if config changed
+      systemd:
+        name: kubelet
+        state: restarted
+      when: kubelet_patch.changed
+
+    - name: wait for kubelet to be ready
+      wait_for:
+        port: 10250
+        host: 127.0.0.1
+        timeout: 60
+      when: kubelet_patch.changed
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Play 5: PSA labels + re-encrypt existing secrets
+# ─────────────────────────────────────────────────────────────────────────────
+- name: k8s_harden | namespace PSA labels + secrets re-encrypt
+  hosts: kmaster1
+  become: true
+  tasks:
+    # System namespaces that legitimately need privileged pods.
+    - name: label system namespaces as privileged
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf label namespace {{ item }} \
+          pod-security.kubernetes.io/enforce=privileged \
+          pod-security.kubernetes.io/audit=privileged \
+          pod-security.kubernetes.io/warn=privileged \
+          --overwrite
+      loop:
+        - kube-system
+        - calico-system
+        - calico-apiserver
+        - tigera-operator
+        - istio-system
+      changed_when: true
+      ignore_errors: true   # some namespaces may not exist yet
+
+    # Rewrite every secret so it lands in the new encrypted store.
+    # `kubectl replace` with no changes still triggers a write — that's
+    # exactly what we want here.
+    - name: rewrite all secrets through encryption-at-rest
+      shell: >
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf
+        get secrets --all-namespaces -o json
+        | kubectl --kubeconfig=/etc/kubernetes/admin.conf replace -f -
+      register: reenc
+      changed_when: "'replaced' in reenc.stdout"
+
+    - name: summary
+      debug:
+        msg: |
+          Hardening applied.
+
+          Verify (run on kmaster1, as root):
+            # encryption: pick any secret and check stored bytes start with 'k8s:enc:aescbc'
+            ETCDCTL_API=3 etcdctl \
+              --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+              --cert=/etc/kubernetes/pki/etcd/server.crt \
+              --key=/etc/kubernetes/pki/etcd/server.key \
+              get /registry/secrets/default/$(kubectl get sa default -o jsonpath='{.secrets[0].name}') | hexdump -C | head
+
+            # audit log
+            tail -f /var/log/kubernetes/audit/audit.log
+
+            # PSA labels
+            kubectl get ns -L pod-security.kubernetes.io/enforce
+
+            # kubelet hardened settings
+            ssh ansible@kmaster1 'sudo grep -E "readOnlyPort|protectKernelDefaults|eventRecordQPS" /var/lib/kubelet/config.yaml'

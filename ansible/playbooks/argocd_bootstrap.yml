@@ -1,0 +1,71 @@
+---
+# argocd_bootstrap.yml
+#
+# One-time bootstrap of the GitOps control plane. Runs on the Ansible
+# controller (which has helm + kubectl context `homelab`). Installs ArgoCD via
+# Helm, then applies the platform AppProject + root app-of-apps. After this,
+# ArgoCD self-manages and reconciles gitops/apps/* by sync-wave (0 Longhorn …
+# 8 Jenkins).
+#
+# Prereq: playbooks/longhorn_prereqs.yml. Run:
+#   ANSIBLE_CONFIG=$PWD/ansible.cfg ansible-playbook playbooks/argocd_bootstrap.yml
+- name: argocd | bootstrap GitOps control plane
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    kube_context: homelab
+    argocd_namespace: argocd
+    argocd_chart_version: "9.7.0"
+    gitops_dir: "{{ playbook_dir }}/../../gitops"
+  tasks:
+    - name: verify helm is installed
+      command: helm version --short
+      changed_when: false
+
+    - name: add argo helm repo
+      command: helm repo add argo https://argoproj.github.io/argo-helm
+      register: repo_add
+      changed_when: "'has been added' in repo_add.stdout"
+      failed_when: repo_add.rc != 0 and 'already exists' not in repo_add.stderr
+
+    - name: update argo helm repo
+      command: helm repo update argo
+      changed_when: false
+
+    - name: install/upgrade argo-cd
+      command: >
+        helm upgrade --install argo-cd argo/argo-cd
+        --namespace {{ argocd_namespace }} --create-namespace
+        --version {{ argocd_chart_version }}
+        --kube-context {{ kube_context }}
+        -f {{ gitops_dir }}/bootstrap/argocd-values.yaml
+        --wait --timeout 10m
+      register: helm_out
+      changed_when: >
+        'has been upgraded' in helm_out.stdout or
+        'has been installed' in helm_out.stdout
+
+    - name: apply platform AppProject
+      command: >
+        kubectl --context {{ kube_context }}
+        apply -f {{ gitops_dir }}/bootstrap/project.yaml
+      register: proj
+      changed_when: "'created' in proj.stdout or 'configured' in proj.stdout"
+
+    - name: apply root app-of-apps
+      command: >
+        kubectl --context {{ kube_context }}
+        apply -f {{ gitops_dir }}/bootstrap/root-app.yaml
+      register: root
+      changed_when: "'created' in root.stdout or 'configured' in root.stdout"
+
+    - name: next steps
+      debug:
+        msg:
+          - "ArgoCD installed. Register this private repo (once):"
+          - "  argocd repo add https://github.com/myhome-automation/git-vsphere.git --username <u> --password <token>"
+          - "Initial admin password:"
+          - "  kubectl --context {{ kube_context }} -n {{ argocd_namespace }} get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d"
+          - "Watch the waves reconcile:"
+          - "  kubectl --context {{ kube_context }} -n {{ argocd_namespace }} get applications -w"

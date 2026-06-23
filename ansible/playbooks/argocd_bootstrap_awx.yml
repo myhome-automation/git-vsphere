@@ -1,0 +1,103 @@
+---
+# argocd_bootstrap_awx.yml
+#
+# AWX-runnable variant of argocd_bootstrap.yml. The original runs on
+# `localhost` and depends on the workstation controller having helm + a
+# `homelab` kube-context — which the AWX execution-environment container does
+# NOT have. This variant runs ON kmaster1 over SSH and uses the node's own
+# `/etc/kubernetes/admin.conf`, installing helm on the master if absent. No
+# controller-side helm/kubectl/kubeconfig required, so it works both from AWX
+# and from any Ansible controller.
+#
+# Idempotent. After it runs, ArgoCD self-manages and reconciles gitops/apps/*
+# by sync-wave (0 Longhorn -> 1 cert-manager -> 2 external-secrets ->
+# 3 Vault -> 4 Vault Secrets Operator -> 5 Consul -> 6 OPA Gatekeeper ->
+# 7 kube-prometheus-stack -> 8 Jenkins -> 9 app workloads).
+#
+# Prereq: longhorn_prereqs.yml (wave 0 storage needs iscsi/nfs on nodes).
+# Repo is public, so ArgoCD needs no SCM credential to pull gitops/.
+- name: argocd | bootstrap GitOps control plane (AWX / on-cluster)
+  hosts: kmaster1
+  become: true
+  gather_facts: false
+  vars:
+    argocd_namespace: argocd
+    argocd_chart_version: "9.7.0"
+    helm_version: "v3.19.5"
+    kubeconfig: /etc/kubernetes/admin.conf
+    work_dir: /opt/gitops-bootstrap
+  tasks:
+    - name: install helm on the master if missing
+      shell: |
+        set -euo pipefail
+        curl -fsSL https://get.helm.sh/helm-{{ helm_version }}-linux-amd64.tar.gz -o /tmp/helm.tgz
+        tar -xzf /tmp/helm.tgz -C /tmp
+        install -m0755 /tmp/linux-amd64/helm /usr/local/bin/helm
+        rm -rf /tmp/helm.tgz /tmp/linux-amd64
+      args:
+        creates: /usr/local/bin/helm
+
+    - name: add argo helm repo
+      command: /usr/local/bin/helm repo add argo https://argoproj.github.io/argo-helm --force-update
+      changed_when: false
+
+    - name: update argo helm repo
+      command: /usr/local/bin/helm repo update argo
+      changed_when: false
+
+    - name: ensure bootstrap working dir exists
+      file:
+        path: "{{ work_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: copy gitops bootstrap manifests to the master
+      copy:
+        src: "{{ playbook_dir }}/../../gitops/bootstrap/{{ item }}"
+        dest: "{{ work_dir }}/{{ item }}"
+        mode: "0644"
+      loop:
+        - argocd-values.yaml
+        - project.yaml
+        - root-app.yaml
+
+    - name: install/upgrade argo-cd (helm, non-HA)
+      command: >
+        /usr/local/bin/helm upgrade --install argo-cd argo/argo-cd
+        --namespace {{ argocd_namespace }} --create-namespace
+        --version {{ argocd_chart_version }}
+        -f {{ work_dir }}/argocd-values.yaml
+        --wait --timeout 10m
+      environment:
+        KUBECONFIG: "{{ kubeconfig }}"
+      register: helm_out
+      changed_when: >
+        'has been upgraded' in helm_out.stdout or
+        'has been installed' in helm_out.stdout
+
+    - name: apply platform AppProject
+      command: kubectl --kubeconfig {{ kubeconfig }} apply -f {{ work_dir }}/project.yaml
+      register: proj
+      changed_when: "'created' in proj.stdout or 'configured' in proj.stdout"
+
+    - name: apply root app-of-apps
+      command: kubectl --kubeconfig {{ kubeconfig }} apply -f {{ work_dir }}/root-app.yaml
+      register: root
+      changed_when: "'created' in root.stdout or 'configured' in root.stdout"
+
+    - name: fetch ArgoCD initial admin password
+      shell: >
+        kubectl --kubeconfig {{ kubeconfig }} -n {{ argocd_namespace }}
+        get secret argocd-initial-admin-secret
+        -o jsonpath='{.data.password}' | base64 -d
+      register: argocd_pw
+      changed_when: false
+      failed_when: false
+
+    - name: bootstrap summary
+      debug:
+        msg:
+          - "ArgoCD installed in namespace '{{ argocd_namespace }}' on the homelab cluster."
+          - "Root app-of-apps applied -> waves 0-9 will now reconcile (Longhorn first)."
+          - "Initial admin password: {{ argocd_pw.stdout | default('(unavailable - check secret)') }}"
+          - "Watch: kubectl -n {{ argocd_namespace }} get applications -w"

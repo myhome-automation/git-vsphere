@@ -1,0 +1,165 @@
+---
+# k8s_audit.yml
+#
+# One-off CIS benchmark scan via aquasecurity/kube-bench.
+# Runs two Jobs in the cluster (one on a master, one on a worker), waits
+# for both to complete, then pulls the reports back to the controller
+# under ansible/kube-bench-reports/.
+#
+# Read-only — no changes to the cluster beyond creating a transient
+# `kube-bench` namespace which is removed at the end.
+#
+# Usage:
+#   cd ansible/
+#   ansible-playbook -i inventory/hosts.ini --vault-password-file=.vault_pass \
+#     playbooks/k8s_audit.yml
+#
+# After it runs:
+#   ls kube-bench-reports/
+#   less kube-bench-reports/kube-bench-master.txt
+#   less kube-bench-reports/kube-bench-node.txt
+- name: k8s_audit | run kube-bench
+  hosts: kmaster1
+  become: true
+  vars:
+    ns: kube-bench
+    kubectl: "kubectl --kubeconfig=/etc/kubernetes/admin.conf"
+    # Image is pinned; bump as needed. Aquasec publishes new tags as the
+    # CIS benchmark updates.
+    image: docker.io/aquasec/kube-bench:v0.15.6
+  tasks:
+    - name: create kube-bench namespace
+      shell: "{{ kubectl }} create namespace {{ ns }} --dry-run=client -o yaml | {{ kubectl }} apply -f -"
+      changed_when: true
+
+    - name: render kube-bench master job
+      copy:
+        dest: /tmp/kube-bench-master.yaml
+        content: |
+          apiVersion: batch/v1
+          kind: Job
+          metadata:
+            name: kube-bench-master
+            namespace: {{ ns }}
+          spec:
+            template:
+              spec:
+                hostPID: true
+                nodeSelector:
+                  node-role.kubernetes.io/control-plane: ""
+                tolerations:
+                  - key: node-role.kubernetes.io/control-plane
+                    operator: Exists
+                    effect: NoSchedule
+                containers:
+                  - name: kube-bench
+                    image: {{ image }}
+                    command: ["kube-bench", "run", "--targets=master,etcd,policies,controlplane", "--json"]
+                    volumeMounts:
+                      - { name: var-lib-etcd,     mountPath: /var/lib/etcd,     readOnly: true }
+                      - { name: var-lib-kubelet,  mountPath: /var/lib/kubelet,  readOnly: true }
+                      - { name: etc-kubernetes,   mountPath: /etc/kubernetes,   readOnly: true }
+                      - { name: usr-bin,          mountPath: /usr/local/mount-from-host/bin, readOnly: true }
+                restartPolicy: Never
+                volumes:
+                  - name: var-lib-etcd
+                    hostPath: { path: /var/lib/etcd }
+                  - name: var-lib-kubelet
+                    hostPath: { path: /var/lib/kubelet }
+                  - name: etc-kubernetes
+                    hostPath: { path: /etc/kubernetes }
+                  - name: usr-bin
+                    hostPath: { path: /usr/bin }
+            backoffLimit: 0
+
+    - name: render kube-bench node job
+      copy:
+        dest: /tmp/kube-bench-node.yaml
+        content: |
+          apiVersion: batch/v1
+          kind: Job
+          metadata:
+            name: kube-bench-node
+            namespace: {{ ns }}
+          spec:
+            template:
+              spec:
+                hostPID: true
+                affinity:
+                  nodeAffinity:
+                    requiredDuringSchedulingIgnoredDuringExecution:
+                      nodeSelectorTerms:
+                        - matchExpressions:
+                            - key: node-role.kubernetes.io/control-plane
+                              operator: DoesNotExist
+                containers:
+                  - name: kube-bench
+                    image: {{ image }}
+                    command: ["kube-bench", "run", "--targets=node,policies", "--json"]
+                    volumeMounts:
+                      - { name: var-lib-kubelet,  mountPath: /var/lib/kubelet,  readOnly: true }
+                      - { name: etc-kubernetes,   mountPath: /etc/kubernetes,   readOnly: true }
+                      - { name: usr-bin,          mountPath: /usr/local/mount-from-host/bin, readOnly: true }
+                restartPolicy: Never
+                volumes:
+                  - name: var-lib-kubelet
+                    hostPath: { path: /var/lib/kubelet }
+                  - name: etc-kubernetes
+                    hostPath: { path: /etc/kubernetes }
+                  - name: usr-bin
+                    hostPath: { path: /usr/bin }
+            backoffLimit: 0
+
+    - name: replace any prior jobs
+      shell: |
+        {{ kubectl }} -n {{ ns }} delete job kube-bench-master --ignore-not-found
+        {{ kubectl }} -n {{ ns }} delete job kube-bench-node   --ignore-not-found
+      changed_when: true
+
+    - name: apply kube-bench jobs
+      shell: |
+        {{ kubectl }} apply -f /tmp/kube-bench-master.yaml
+        {{ kubectl }} apply -f /tmp/kube-bench-node.yaml
+      changed_when: true
+
+    - name: wait for kube-bench-master to complete
+      command: "{{ kubectl }} -n {{ ns }} wait --for=condition=complete job/kube-bench-master --timeout=300s"
+      changed_when: false
+
+    - name: wait for kube-bench-node to complete
+      command: "{{ kubectl }} -n {{ ns }} wait --for=condition=complete job/kube-bench-node --timeout=300s"
+      changed_when: false
+
+    - name: capture master report
+      shell: |
+        pod=$({{ kubectl }} -n {{ ns }} get pods -l job-name=kube-bench-master -o jsonpath='{.items[0].metadata.name}')
+        {{ kubectl }} -n {{ ns }} logs "$pod" > /tmp/kube-bench-master.txt
+      changed_when: true
+
+    - name: capture node report
+      shell: |
+        pod=$({{ kubectl }} -n {{ ns }} get pods -l job-name=kube-bench-node -o jsonpath='{.items[0].metadata.name}')
+        {{ kubectl }} -n {{ ns }} logs "$pod" > /tmp/kube-bench-node.txt
+      changed_when: true
+
+    - name: fetch reports to controller
+      fetch:
+        src: "/tmp/{{ item }}.txt"
+        dest: "kube-bench-reports/"
+        flat: true
+      loop:
+        - kube-bench-master
+        - kube-bench-node
+
+    - name: clean up kube-bench namespace
+      shell: "{{ kubectl }} delete namespace {{ ns }} --wait=false"
+      changed_when: true
+
+    - name: summary
+      debug:
+        msg: |
+          kube-bench reports saved to ansible/kube-bench-reports/
+          Skim with:
+            less kube-bench-reports/kube-bench-master.txt
+            less kube-bench-reports/kube-bench-node.txt
+          [FAIL] lines are the gaps worth fixing.

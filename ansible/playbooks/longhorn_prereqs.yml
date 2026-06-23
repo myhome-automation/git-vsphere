@@ -1,0 +1,35 @@
+---
+# longhorn_prereqs.yml
+#
+# Node prerequisites for Longhorn (gitops wave 0). Longhorn attaches its
+# replicated volumes over iSCSI and uses an NFSv4 client for RWX volumes and
+# backups, so every k8s node needs open-iscsi + nfs-utils with the iscsi_tcp
+# kernel module loaded and iscsid running.
+#
+#   ANSIBLE_CONFIG=$PWD/ansible.cfg ansible-playbook playbooks/longhorn_prereqs.yml
+- name: longhorn | install node prerequisites
+  hosts: k8s_masters:k8s_workers
+  become: true
+  tasks:
+    - name: install iscsi initiator + nfs client
+      dnf:
+        name:
+          - iscsi-initiator-utils
+          - nfs-utils
+        state: present
+
+    - name: ensure iscsi_tcp loads on boot
+      copy:
+        dest: /etc/modules-load.d/longhorn-iscsi.conf
+        content: "iscsi_tcp\n"
+        mode: "0644"
+
+    - name: load iscsi_tcp now
+      command: modprobe iscsi_tcp
+      changed_when: false
+
+    - name: enable and start iscsid
+      systemd:
+        name: iscsid
+        state: started
+        enabled: true

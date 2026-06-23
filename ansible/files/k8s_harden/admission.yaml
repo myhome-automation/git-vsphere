@@ -1,0 +1,30 @@
+# Cluster-wide AdmissionConfiguration.
+# Loaded via --admission-control-config-file on each master.
+#
+# Sets PodSecurity defaults to `restricted` cluster-wide. System namespaces
+# that legitimately need privileged workloads (Calico, Istio sidecar
+# injection, etc.) are exempted by name so they keep working without
+# per-namespace labels.
+apiVersion: apiserver.config.k8s.io/v1
+kind: AdmissionConfiguration
+plugins:
+  - name: PodSecurity
+    configuration:
+      apiVersion: pod-security.admission.config.k8s.io/v1
+      kind: PodSecurityConfiguration
+      defaults:
+        enforce: "restricted"
+        enforce-version: "latest"
+        audit: "restricted"
+        audit-version: "latest"
+        warn: "restricted"
+        warn-version: "latest"
+      exemptions:
+        usernames: []
+        runtimeClasses: []
+        namespaces:
+          - kube-system
+          - calico-system
+          - calico-apiserver
+          - tigera-operator
+          - istio-system

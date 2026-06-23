@@ -1,0 +1,26 @@
+# kube-apiserver audit policy.
+# Loaded via --audit-policy-file on each master.
+#
+# Tier strategy:
+#   - RequestResponse for secrets, configmaps, RBAC mutations (high-signal)
+#   - None for events (very noisy, low value)
+#   - Metadata for everything else (who / when / what verb / which object)
+apiVersion: audit.k8s.io/v1
+kind: Policy
+omitStages:
+  - RequestReceived
+rules:
+  - level: None
+    resources:
+      - group: ""
+        resources: ["events"]
+  - level: RequestResponse
+    resources:
+      - group: ""
+        resources: ["secrets", "configmaps"]
+  - level: RequestResponse
+    verbs: ["create", "update", "patch", "delete"]
+    resources:
+      - group: "rbac.authorization.k8s.io"
+        resources: ["roles", "rolebindings", "clusterroles", "clusterrolebindings"]
+  - level: Metadata

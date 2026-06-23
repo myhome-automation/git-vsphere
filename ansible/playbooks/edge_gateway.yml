@@ -1,0 +1,210 @@
+---
+# edge_gateway.yml
+#
+# Edge API gateway on lb1/lb2 (ESXi VMs). nginx terminates HTTPS for
+# biplextech.com with a cert from the internal CA and reverse-proxies ALL
+# paths to the in-cluster ingress-nginx NodePort; ingress-nginx does the
+# path routing (/argocd /grafana /prometheus /alertmanager /jenkins
+# /longhorn /vault /consul). The keepalived VIP 192.168.1.50 (loadbalancer.yml)
+# is the single entry point. HAProxy keeps only the k8s API (6443).
+#
+#   ANSIBLE_CONFIG=$PWD/ansible.cfg ansible-playbook playbooks/edge_gateway.yml
+#
+# NOTE: this generates a local CA + server cert under ansible/files/edge-certs/.
+# To unify with the in-cluster cert-manager CA later, replace these with the
+# exported `biplextech-tls` secret. Distribute files/edge-certs/biplextech-ca.crt
+# to clients so the cert is trusted.
+
+# ── Generate the biplextech.com CA + server cert on the controller ──────────
+- name: edge | generate biplextech.com TLS material (controller)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    certs_dir: "{{ playbook_dir }}/../files/edge-certs"
+  tasks:
+    - name: ensure certs dir exists
+      file:
+        path: "{{ certs_dir }}"
+        state: directory
+        mode: "0700"
+
+    - name: generate CA key
+      command: openssl genrsa -out {{ certs_dir }}/biplextech-ca.key 4096
+      args:
+        creates: "{{ certs_dir }}/biplextech-ca.key"
+
+    - name: generate CA certificate
+      command: >
+        openssl req -x509 -new -nodes -key {{ certs_dir }}/biplextech-ca.key
+        -sha256 -days 3650 -out {{ certs_dir }}/biplextech-ca.crt
+        -subj "/O=biplextech/CN=biplextech.com internal CA"
+      args:
+        creates: "{{ certs_dir }}/biplextech-ca.crt"
+
+    - name: generate server key
+      command: openssl genrsa -out {{ certs_dir }}/biplextech.key 2048
+      args:
+        creates: "{{ certs_dir }}/biplextech.key"
+
+    - name: generate server CSR
+      command: >
+        openssl req -new -key {{ certs_dir }}/biplextech.key
+        -out {{ certs_dir }}/biplextech.csr
+        -subj "/O=biplextech/CN=biplextech.com"
+      args:
+        creates: "{{ certs_dir }}/biplextech.csr"
+
+    - name: write SAN extfile
+      copy:
+        dest: "{{ certs_dir }}/san.ext"
+        mode: "0644"
+        content: |
+          subjectAltName=DNS:biplextech.com,DNS:*.biplextech.com
+          extendedKeyUsage=serverAuth
+          basicConstraints=CA:FALSE
+
+    - name: sign server cert with the CA
+      command: >
+        openssl x509 -req -in {{ certs_dir }}/biplextech.csr
+        -CA {{ certs_dir }}/biplextech-ca.crt -CAkey {{ certs_dir }}/biplextech-ca.key
+        -CAcreateserial -out {{ certs_dir }}/biplextech.crt
+        -days 825 -sha256 -extfile {{ certs_dir }}/san.ext
+      args:
+        creates: "{{ certs_dir }}/biplextech.crt"
+
+    - name: assemble fullchain (server + CA)
+      shell: >
+        cat {{ certs_dir }}/biplextech.crt {{ certs_dir }}/biplextech-ca.crt
+        > {{ certs_dir }}/biplextech-fullchain.crt
+      args:
+        creates: "{{ certs_dir }}/biplextech-fullchain.crt"
+
+# ── nginx HTTPS path gateway on lb1/lb2 ─────────────────────────────────────
+- name: edge | nginx HTTPS gateway on the LB pair
+  hosts: loadbalancers
+  become: true
+  vars:
+    certs_dir: "{{ playbook_dir }}/../files/edge-certs"
+  tasks:
+    - name: install nginx
+      dnf:
+        name: nginx
+        state: present
+
+    - name: certs dir on host
+      file:
+        path: /etc/nginx/certs
+        state: directory
+        mode: "0700"
+
+    - name: copy server fullchain
+      copy:
+        src: "{{ certs_dir }}/biplextech-fullchain.crt"
+        dest: /etc/nginx/certs/biplextech-fullchain.crt
+        mode: "0644"
+      notify: reload nginx
+
+    - name: copy server key
+      copy:
+        src: "{{ certs_dir }}/biplextech.key"
+        dest: /etc/nginx/certs/biplextech.key
+        mode: "0600"
+      notify: reload nginx
+
+    # Loaded first (alphabetical) so $connection_upgrade is defined for the
+    # websocket-aware proxy below (ArgoCD/Grafana/Consul use websockets).
+    - name: websocket upgrade map
+      copy:
+        dest: /etc/nginx/conf.d/00-upgrade-map.conf
+        mode: "0644"
+        content: |
+          map $http_upgrade $connection_upgrade {
+              default upgrade;
+              ''      close;
+          }
+      notify: reload nginx
+
+    - name: write biplextech.com gateway config
+      copy:
+        dest: /etc/nginx/conf.d/biplextech-gateway.conf
+        mode: "0644"
+        content: |
+          upstream cluster_ingress {
+          {% for h in ['kworker1','kworker2','kworker3'] %}
+              server {{ hostvars[h].ansible_host }}:{{ ingress_http_nodeport }} max_fails=2 fail_timeout=5s;
+          {% endfor %}
+          }
+
+          server {
+              listen 80 default_server;
+              server_name {{ domain }};
+              return 301 https://$host$request_uri;
+          }
+
+          server {
+              listen 443 ssl default_server;
+              http2 on;
+              server_name {{ domain }};
+
+              ssl_certificate     /etc/nginx/certs/biplextech-fullchain.crt;
+              ssl_certificate_key /etc/nginx/certs/biplextech.key;
+              ssl_protocols       TLSv1.2 TLSv1.3;
+              ssl_session_cache   shared:SSL:10m;
+              client_max_body_size 50m;
+
+              # All paths -> in-cluster ingress-nginx, which routes by path.
+              location / {
+                  proxy_pass http://cluster_ingress;
+                  proxy_set_header Host {{ domain }};
+                  proxy_set_header X-Real-IP $remote_addr;
+                  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto https;
+                  proxy_http_version 1.1;
+                  proxy_set_header Upgrade $http_upgrade;
+                  proxy_set_header Connection $connection_upgrade;
+                  proxy_read_timeout 300s;
+              }
+          }
+      notify: reload nginx
+
+    # Rocky's stock nginx.conf ships a `server { listen 80 default_server; }`
+    # in the http block, which collides with our default_server above.
+    - name: remove stock default server block from nginx.conf
+      replace:
+        path: /etc/nginx/nginx.conf
+        regexp: '(?s)\n\s*server\s*\{.*?listen\s+80 default_server;.*?\n\s*\}\n'
+        replace: "\n"
+      notify: reload nginx
+
+    - name: allow nginx to make outbound proxy connections (SELinux)
+      seboolean:
+        name: httpd_can_network_connect
+        state: true
+        persistent: true
+
+    - name: open HTTP/HTTPS on firewalld
+      firewalld:
+        port: "{{ item }}"
+        permanent: true
+        immediate: true
+        state: enabled
+      loop:
+        - "{{ http_port }}/tcp"
+        - "{{ https_port }}/tcp"
+
+    - name: validate nginx config
+      command: nginx -t
+      changed_when: false
+
+    - name: enable and start nginx
+      systemd:
+        name: nginx
+        state: started
+        enabled: true
+
+  handlers:
+    - name: reload nginx
+      systemd:
+        name: nginx
+        state: reloaded
