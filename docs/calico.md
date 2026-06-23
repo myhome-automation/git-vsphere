@@ -162,3 +162,52 @@ CIDR cannot be changed in place. Procedure to change:
 3. `ansible-playbook playbooks/site.yml --tags k8s,calico,istio`
 
 See [operations.md](operations.md) "Change pod CIDR".
+
+---
+
+## C5. firewalld drops forwarded host→pod traffic (FailedDiscoveryCheck)
+
+**Symptom:** new connections from a node to a pod on *another* node fail with
+`no route to host`, while existing (conntrack ESTABLISHED) connections keep
+working. The `v3.projectcalico.org` APIService flips to
+`FailedDiscoveryCheck` ("dial tcp <calico-api clusterIP>:443: connect: no route
+to host") and **any namespace deletion hangs** in `Terminating` with
+`NamespaceDeletionDiscoveryFailure: projectcalico.org/v3: stale GroupVersion
+discovery`. Routes and `calico-node` look healthy; `iptables -S FORWARD` shows
+the `cali-FORWARD` jump present; restarting `calico-node` does **not** fix it.
+
+**Root cause:** firewalld on Rocky 9 uses the **nftables backend**. The k8s
+playbooks add the pod CIDR to the `trusted` zone, but firewalld zones match by
+**SOURCE address only** — that covers pod-sourced traffic (`pod → anywhere`),
+not the **host → pod** direction (source = the node's `192.168.1.x` IP). In
+nftables a DROP in firewalld's base chain is terminal regardless of an ACCEPT
+in Calico's `ip filter` FORWARD chain, so the forwarded host→pod packet is
+dropped on the **destination** node. Forwarded (inter-zone) traffic in firewalld
+is governed by **policies**, not zones. The breakage stays latent until a
+firewalld **reload** (a NetworkManager `connection up`, a reboot, etc.) drops
+the previously-working runtime state.
+
+**Diagnosis (confirm before fixing):**
+```bash
+# Isolate which side drops: stop firewalld on the DEST (pod's) node only.
+ansible <destnode> -b -m systemd -a 'name=firewalld state=stopped'
+ansible <srcnode>  -b -m shell  -a 'bash -c "echo > /dev/tcp/<podIP>/<port>"'  # OK ⇒ dest firewalld
+ansible <destnode> -b -m systemd -a 'name=firewalld state=started'
+```
+
+**Fix (permanent, in IaC):** a firewalld policy that accepts forwarded traffic
+to/from the pod CIDR, applied to every k8s node. Baked into `k8s_master.yml` /
+`k8s_worker.yml` via `ansible/files/calico-firewalld-policy.sh` (idempotent):
+```
+firewall-cmd --permanent --new-policy calico-fwd
+firewall-cmd --permanent --policy calico-fwd --add-ingress-zone ANY
+firewall-cmd --permanent --policy calico-fwd --add-egress-zone  ANY
+firewall-cmd --permanent --policy calico-fwd \
+  --add-rich-rule='rule family=ipv4 source      address=10.0.0.0/16 accept'
+firewall-cmd --permanent --policy calico-fwd \
+  --add-rich-rule='rule family=ipv4 destination address=10.0.0.0/16 accept'
+firewall-cmd --reload
+```
+After the policy is in place, restart `calico-apiserver` so the aggregator
+re-probes discovery; the APIService returns to `Available=True` and any stuck
+`Terminating` namespace finalizes on its own.

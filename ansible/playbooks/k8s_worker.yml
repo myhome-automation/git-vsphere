@@ -122,6 +122,15 @@
         permanent: true
         immediate: true
 
+    # The trusted zone above only matches by SOURCE, so it does NOT cover the
+    # host->pod direction (source = node IP). Forwarded traffic needs a
+    # firewalld POLICY. Without it, kube-apiserver->pod / node->pod break after
+    # any firewalld reload. See docs/calico.md.
+    - name: allow forwarded pod-CIDR traffic via firewalld policy
+      script: files/calico-firewalld-policy.sh {{ pod_network_cidr }}
+      register: calico_fwd_policy
+      changed_when: "'POLICY_CHANGED' in calico_fwd_policy.stdout"
+
   handlers:
     - name: restart containerd
       systemd:

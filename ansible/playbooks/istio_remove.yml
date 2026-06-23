@@ -1,0 +1,70 @@
+---
+# istio_remove.yml
+#
+# Cleanly remove Istio from the homelab cluster — the service mesh is being
+# replaced by Consul Connect (gitops wave 5). Idempotent: a no-op once
+# istio-system is gone. Runs on the controller (kubectl context `homelab`).
+# istioctl is used if present; otherwise the namespace + CRD deletion does the
+# bulk of the cleanup.
+#
+#   ANSIBLE_CONFIG=$PWD/ansible.cfg ansible-playbook playbooks/istio_remove.yml
+- name: istio | uninstall from homelab
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    kube_context: homelab
+  tasks:
+    - name: check for istio-system namespace
+      command: kubectl --context {{ kube_context }} get namespace istio-system
+      register: istio_ns
+      failed_when: false
+      changed_when: false
+
+    - name: end play early if istio already gone
+      meta: end_play
+      when: istio_ns.rc != 0
+
+    - name: check for istioctl
+      command: which istioctl
+      register: have_istioctl
+      failed_when: false
+      changed_when: false
+
+    - name: istioctl uninstall --purge
+      command: istioctl uninstall --purge -y --context {{ kube_context }}
+      register: istioctl_out
+      changed_when: istioctl_out.rc == 0
+      failed_when: false
+      when: have_istioctl.rc == 0
+
+    - name: strip istio-injection label from all namespaces
+      shell: >
+        kubectl --context {{ kube_context }} label namespace --all
+        istio-injection- istio.io/rev- 2>/dev/null || true
+      changed_when: false
+
+    - name: delete istio-system namespace
+      command: >
+        kubectl --context {{ kube_context }} delete namespace istio-system
+        --ignore-not-found --wait=true
+      register: del_ns
+      changed_when: "'deleted' in del_ns.stdout"
+      failed_when: false
+
+    - name: delete leftover istio CRDs
+      shell: >
+        kubectl --context {{ kube_context }} get crds -o name |
+        grep 'istio.io' |
+        xargs -r kubectl --context {{ kube_context }} delete
+      register: del_crds
+      changed_when: "del_crds.stdout | trim | length > 0"
+      failed_when: false
+
+    - name: delete leftover istio webhooks
+      shell: >
+        kubectl --context {{ kube_context }} delete
+        mutatingwebhookconfigurations,validatingwebhookconfigurations
+        -l app.kubernetes.io/part-of=istio --ignore-not-found
+      changed_when: false
+      failed_when: false

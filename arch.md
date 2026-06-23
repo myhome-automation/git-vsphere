@@ -31,8 +31,14 @@ Context `homelab`. **No StorageClass yet. No LB controller (by design — extern
       wildcard), node A records, upstream forwarding. All 9 VMs flipped to .202
       (primary) + 8.8.8.8 (secondary) via NetworkManager. Verify:
       `dig @192.168.1.202 biplextech.com +short` → `192.168.1.50`.
-- [ ] **NEXT →** Remove Istio (`istio_remove.yml`)
-- [ ] Apply kubeadm hardening + fix kube-bench tag + run audit
+- [x] **Istio removed** (`istio_remove.yml`) — istio-system gone, 0 CRDs, 0
+      webhooks, 0 pods. **Surfaced + fixed a firewalld regression:** firewalld
+      (nftables) drops forwarded *host→pod* packets (trusted zone matches SOURCE
+      only); fixed with a firewalld `calico-fwd` policy on all k8s nodes (now in
+      `k8s_master.yml`/`k8s_worker.yml` via `files/calico-firewalld-policy.sh`).
+      Cluster fully healthy: 6/6 Ready, Calico tigerastatus all True, cluster
+      DNS + pod egress OK.
+- [ ] **NEXT →** Apply kubeadm hardening + fix kube-bench tag + run audit
 - [ ] `longhorn_prereqs.yml` + `argocd_bootstrap.yml` → reconcile waves 0–8
 - [ ] Edge gateway: lb1/lb2 nginx (TLS + path routing) + VIP → ingress-nginx
       (`edge_gateway.yml`); distribute biplextech.com CA cert
@@ -125,10 +131,19 @@ Inventory:
   ingress NodePorts for Step F).
 - **Verify:** `dig @192.168.1.202 biplextech.com +short` → `192.168.1.50`.
 
-### Step B — Remove Istio
+### Step B — Remove Istio  ✅ DONE
 - `ansible/playbooks/istio_remove.yml`: `istioctl uninstall --purge -y`, delete
   `istio-system`, strip `istio-injection` labels.
 - **Verify:** `kubectl get ns | grep -v istio`; no istio pods, no mutating webhook.
+- **Incident fixed during this step:** the namespace hung in `Terminating` on a
+  `projectcalico.org/v3 FailedDiscoveryCheck` — root cause was firewalld
+  (nftables backend) dropping forwarded **host→pod** packets. The `trusted` zone
+  set by the k8s playbooks matches by SOURCE only, so it never covered host→pod
+  (source = node IP); forwarded traffic needs a firewalld **policy**. Fixed with
+  `calico-fwd` policy on all k8s nodes — now baked into `k8s_master.yml` /
+  `k8s_worker.yml` (`files/calico-firewalld-policy.sh`). Likely triggered by the
+  DNS play's `nmcli connection up` reloading firewalld. Verify host→pod:
+  `dig`-free TCP probe node→podIP, and `tigerastatus` all True.
 
 ### Step C — kubeadm hardening
 - Fix kube-bench image in `k8s_audit.yml` → `docker.io/aquasec/kube-bench:v0.15.6`.
