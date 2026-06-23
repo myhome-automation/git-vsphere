@@ -19,9 +19,9 @@
 Context `homelab`. **No StorageClass yet. No LB controller (by design — external).**
 
 **gdragon** (192.168.1.181, this host) is now the **mgmt/security box** — a
-single-node **k3s** cluster running **AWX + OpenVAS (GVM) + Nessus**, all on k3s for
-one consistent deploy model (no mixed docker+k3s), separate from the ESXi k8s
-platform. See §8.
+single-node **k3s** cluster running **AWX + OpenVAS (GVM)**, both on k3s for one
+consistent deploy model (no mixed docker+k3s), separate from the ESXi k8s platform.
+See §8.
 
 **Domains (new, 2026-06-22):** two-zone split — `homelab.com` **internal** (LAN,
 authoritative on .202), `biplextech.com` **external/registered**; bridged by CNAMEs
@@ -58,7 +58,7 @@ currently still uses `biplextech.com`. See §9.
       (`edge_gateway.yml`); distribute biplextech.com CA cert
 - [ ] Wave 0–8 apps reconciled & verified (Longhorn → Jenkins); Vault init/unseal
 - [ ] **gdragon mgmt/security (§8):** install single-node k3s → deploy AWX
-      (AWX Operator) + OpenVAS/GVM + Nessus, all on k3s.
+      (AWX Operator) + OpenVAS/GVM, both on k3s.
 - [ ] **Domain split (§9):** stand up `homelab.com` (internal) + `biplextech.com`
       (external) two-zone DNS on .202 + CNAME bridge; migrate internal names off
       `biplextech.com` (DNS, cert SANs, gitops values).
@@ -211,19 +211,20 @@ app. Escape hatch: Vault→1 replica, or revisit 12 GB workers if pressure is ch
 
 **gdragon** (`192.168.1.181`, the workstation this repo lives on) is repurposed
 into the **management + security** host, **separate from the ESXi k8s platform**.
-It runs a **single-node k3s** cluster, and **all three tools deploy onto that k3s**
+It runs a **single-node k3s** cluster, and **both tools deploy onto that k3s**
 (one consistent k8s deploy model — *not* one in docker and another in k3s):
 
 | Tool | What | Deploy method on k3s |
 |---|---|---|
 | **AWX** | Ansible automation controller (web UI for the `ansible/` playbooks) | **AWX Operator** (`awx-operator` Helm chart → `AWX` CR) |
-| **OpenVAS / GVM** | Greenbone vuln scanner | container image (e.g. `greenbone/...`) as a Deployment + PVC |
-| **Nessus** | Tenable Nessus scanner | `tenable/nessus` image as a Deployment + PVC + NodePort/Ingress |
+| **OpenVAS / GVM** | Greenbone vuln scanner (the sole scanner — Nessus dropped) | container image (e.g. `greenbone/...`) as a Deployment + PVC |
 
 Decisions / rationale:
 - **k3s, not docker/podman** — earlier we kept the AWX image under podman; that is
   now **moot**. Standardising on k3s gives one operational model (kubectl, Helm,
-  PVCs, ingress) for all three tools and matches the rest of the estate.
+  PVCs, ingress) for both tools and matches the rest of the estate.
+- **Scanner = OpenVAS only** — Nessus dropped (OpenVAS/GVM covers the need; no
+  licence/activation dependency).
 - **Single node** is enough — these are mgmt/security tools, not HA workloads.
 - gdragon image cleanup already done (podman pruned 2.3 GB → 1.0 GB).
 
@@ -234,13 +235,12 @@ written / not run**):
    uses flannel by default — fine for single node.)
 2. `awx-operator` via Helm → `AWX` CR (admin secret, NodePort/Ingress).
 3. OpenVAS/GVM Deployment + PVC (feed sync is heavy — size the PV; first sync slow).
-4. Nessus Deployment + PVC; activate with licence/activation code (**user-supplied**).
-5. Expose via k3s Traefik ingress under the internal domain (§9):
-   `awx.homelab.com`, `openvas.homelab.com`, `nessus.homelab.com`.
+4. Expose via k3s Traefik ingress under the internal domain (§9):
+   `awx.homelab.com`, `openvas.homelab.com`.
 
-⚠ Open items for next session: Nessus activation code, OpenVAS/GVM image choice
-(single-container vs split GVMd/scanner), and gdragon resource headroom (k3s + GVM
-feed + Nessus + AWX is RAM-hungry — check before deploying all three).
+⚠ Open items for next session: OpenVAS/GVM image choice (single-container vs split
+GVMd/scanner), and gdragon resource headroom (k3s + GVM feed + AWX is RAM-hungry —
+check before deploying both).
 
 ## 9. Domain split — internal vs external (NEW, 2026-06-22)
 
