@@ -13,7 +13,7 @@
 
 ## 0. Resume here — current state (update every session)
 
-**Last updated:** 2026-06-22
+**Last updated:** 2026-06-22 (DNS applied)
 
 **Cluster:** kubeadm v1.36.1, 3 masters + 3 workers, Calico v3.30.4, all Ready.
 Context `homelab`. **No StorageClass yet. No LB controller (by design — external).**
@@ -26,8 +26,12 @@ Context `homelab`. **No StorageClass yet. No LB controller (by design — extern
       argocd values), 10 app-of-apps Applications waves 0–8, path-based values,
       cert-manager issuers + biplextech cert. Pinned chart versions. **Not yet
       applied** — needs ArgoCD bootstrap on the live cluster.
-- [ ] **NEXT →** Repurpose `vault-server` .202 as `biplextech.com` DNS (`dns_biplextech.yml`)
-- [ ] Remove Istio (`istio_remove.yml`)
+- [x] **DNS applied & verified** — `vault-server` .202 authoritative for
+      `biplextech.com` via dnsmasq; apex `biplextech.com → .50` (path-based, no
+      wildcard), node A records, upstream forwarding. All 9 VMs flipped to .202
+      (primary) + 8.8.8.8 (secondary) via NetworkManager. Verify:
+      `dig @192.168.1.202 biplextech.com +short` → `192.168.1.50`.
+- [ ] **NEXT →** Remove Istio (`istio_remove.yml`)
 - [ ] Apply kubeadm hardening + fix kube-bench tag + run audit
 - [ ] `longhorn_prereqs.yml` + `argocd_bootstrap.yml` → reconcile waves 0–8
 - [ ] Edge gateway: lb1/lb2 nginx (TLS + path routing) + VIP → ingress-nginx
@@ -112,12 +116,14 @@ Inventory:
 
 ## 4. Execution plan (do in order — each step is independently verifiable)
 
-### Step A — DNS: `biplextech.com` on .202
-- `ansible/playbooks/dns_biplextech.yml`: install BIND (or dnsmasq) on .202,
-  zone `biplextech.com`, wildcard `*.biplextech.com → 192.168.1.50`, forward
-  upstream. Move .202 from `[vault]` to a new `[dns]` group in inventory.
-- Flip `group_vars/all/vars.yml` `domain: biplextech.com`.
-- **Verify:** `dig @192.168.1.202 argocd.biplextech.com +short` → `192.168.1.50`.
+### Step A — DNS: `biplextech.com` on .202  ✅ DONE
+- `ansible/playbooks/dns_biplextech.yml`: installs dnsmasq on .202, apex
+  `biplextech.com → 192.168.1.50` (path-based single host — **no wildcard**),
+  node A records, forwards upstream. `.202` is in the `[dns]` inventory group.
+  Second play flips every host's resolver to .202 (primary) + upstream (secondary).
+- Flipped `group_vars/all/vars.yml` `domain: biplextech.com` (+ `dns_server`,
+  ingress NodePorts for Step F).
+- **Verify:** `dig @192.168.1.202 biplextech.com +short` → `192.168.1.50`.
 
 ### Step B — Remove Istio
 - `ansible/playbooks/istio_remove.yml`: `istioctl uninstall --purge -y`, delete

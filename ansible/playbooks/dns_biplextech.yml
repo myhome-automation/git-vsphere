@@ -1,0 +1,130 @@
+---
+# dns_biplextech.yml
+#
+# Repurpose the ex-vault-server VM (192.168.1.202) as the authoritative DNS
+# server for biplextech.com via dnsmasq. Platform access is path-based on a
+# single host, so the only record the platform needs is:
+#     biplextech.com -> 192.168.1.50  (keepalived VIP / edge gateway)
+# Node A records are added for ops convenience. Everything else is forwarded
+# upstream. All hosts are then pointed at .202 for DNS.
+#
+#   ANSIBLE_CONFIG=$PWD/ansible.cfg ansible-playbook playbooks/dns_biplextech.yml
+- name: dns | authoritative biplextech.com on the repurposed vault-server (.202)
+  hosts: dns
+  become: true
+  vars:
+    internal_domain: "{{ domain }}" # biplextech.com
+    dns_records:
+      - { name: biplextech.com, ip: "{{ vip }}" } # apex -> edge VIP (path-based)
+      - { name: kmaster1, ip: 192.168.1.186 }
+      - { name: kmaster2, ip: 192.168.1.189 }
+      - { name: kmaster3, ip: 192.168.1.187 }
+      - { name: kworker1, ip: 192.168.1.182 }
+      - { name: kworker2, ip: 192.168.1.183 }
+      - { name: kworker3, ip: 192.168.1.184 }
+      - { name: lb1, ip: 192.168.1.188 }
+      - { name: lb2, ip: 192.168.1.185 }
+      - { name: dns, ip: 192.168.1.202 }
+  tasks:
+    - name: install dnsmasq
+      dnf:
+        name: dnsmasq
+        state: present
+
+    - name: ensure hosts dir exists (outside conf-dir)
+      file:
+        path: /etc/dnsmasq.hosts.d
+        state: directory
+        mode: "0755"
+
+    # The apex entry is written verbatim; short names get the domain suffix via
+    # expand-hosts. dnsmasq auto-generates PTR records from these.
+    - name: write biplextech.com zone hosts file
+      copy:
+        dest: /etc/dnsmasq.hosts.d/biplextech.hosts
+        mode: "0644"
+        content: |
+          {% for r in dns_records %}
+          {{ r.ip }} {{ r.name if '.' in r.name else r.name ~ '.' ~ internal_domain }}
+          {% endfor %}
+      notify: restart dnsmasq
+
+    - name: write dnsmasq config
+      copy:
+        dest: /etc/dnsmasq.d/biplextech.conf
+        mode: "0644"
+        content: |
+          # Authoritative for {{ internal_domain }} only; no DHCP.
+          domain={{ internal_domain }}
+          local=/{{ internal_domain }}/
+          expand-hosts
+
+          # addn-hosts is the only A-record source (ignore /etc/hosts).
+          no-hosts
+          addn-hosts=/etc/dnsmasq.hosts.d/biplextech.hosts
+
+          # Listen on loopback + this host's primary address.
+          listen-address=127.0.0.1,{{ ansible_default_ipv4.address }}
+          bind-interfaces
+
+          # Forward everything else upstream.
+          no-resolv
+          {% for s in upstream_dns %}
+          server={{ s }}
+          {% endfor %}
+
+          cache-size=1000
+          log-queries
+          log-facility=/var/log/dnsmasq.log
+      notify: restart dnsmasq
+
+    - name: open DNS ports (53 tcp+udp)
+      firewalld:
+        port: "{{ item }}"
+        permanent: true
+        immediate: true
+        state: enabled
+      loop:
+        - 53/tcp
+        - 53/udp
+
+    - name: enable and start dnsmasq
+      systemd:
+        name: dnsmasq
+        state: started
+        enabled: true
+
+  handlers:
+    - name: restart dnsmasq
+      systemd:
+        name: dnsmasq
+        state: restarted
+
+# ── Point every host at .202 for DNS ────────────────────────────────────────
+- name: dns | set resolver to the biplextech.com DNS server on all hosts
+  hosts: everyone
+  become: true
+  vars:
+    # Primary: the authoritative DNS (.202). Secondary: an upstream resolver so
+    # external lookups survive a .202 outage.
+    dns_servers: "{{ dns_server }} {{ upstream_dns[0] }}"
+  tasks:
+    - name: find primary NetworkManager connection
+      shell: >
+        nmcli -t -f NAME,DEVICE connection show --active |
+        awk -F: -v iface="{{ ansible_default_ipv4.interface }}" '$2==iface {print $1; exit}'
+      register: nm_conn
+      changed_when: false
+
+    - name: set DNS via NetworkManager (override DHCP)
+      command: >
+        nmcli connection modify "{{ nm_conn.stdout }}"
+        ipv4.dns "{{ dns_servers }}"
+        ipv4.dns-search "{{ domain }}"
+        ipv4.ignore-auto-dns yes
+      register: nm_modify
+      changed_when: true
+
+    - name: reapply connection to push DNS change
+      command: nmcli connection up "{{ nm_conn.stdout }}"
+      when: nm_modify is changed
