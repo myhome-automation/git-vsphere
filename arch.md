@@ -57,8 +57,8 @@ currently still uses `biplextech.com`. See §9.
 - [ ] Edge gateway: lb1/lb2 nginx (TLS + path routing) + VIP → ingress-nginx
       (`edge_gateway.yml`); distribute biplextech.com CA cert
 - [ ] Wave 0–8 apps reconciled & verified (Longhorn → Jenkins); Vault init/unseal
-- [ ] **gdragon mgmt/security (§8):** install single-node k3s → deploy AWX
-      (AWX Operator) + OpenVAS/GVM, both on k3s.
+- [ ] **gdragon mgmt/security (§8):** k3s already installed+enabled (verify node
+      Ready) → deploy AWX (AWX Operator) + OpenVAS/GVM, both on k3s.
 - [ ] **Domain split (§9):** stand up `homelab.com` (internal) + `biplextech.com`
       (external) two-zone DNS on .202 + CNAME bridge; migrate internal names off
       `biplextech.com` (DNS, cert SANs, gitops values).
@@ -230,9 +230,10 @@ Decisions / rationale:
 
 Install order (to script as `ansible/playbooks/gdragon_secops.yml`, **not yet
 written / not run**):
-1. Install k3s single-node (`curl -sfL https://get.k3s.io | sh -`); export
-   `KUBECONFIG=/etc/rancher/k3s/k3s.yaml`. (Decide: keep firewalld vs disable; k3s
-   uses flannel by default — fine for single node.)
+1. ✅ k3s single-node **already installed + enabled** on gdragon (auto-starts on
+   boot). ⚠ `sudo k3s kubectl get nodes` returned no rows on 2026-06-22 — verify the
+   node is Ready on resume before deploying. Use `KUBECONFIG=/etc/rancher/k3s/k3s.yaml`.
+   (Decide: keep firewalld vs disable; k3s uses flannel by default — fine here.)
 2. `awx-operator` via Helm → `AWX` CR (admin secret, NodePort/Ingress).
 3. OpenVAS/GVM Deployment + PVC (feed sync is heavy — size the PV; first sync slow).
 4. Expose via k3s Traefik ingress under the internal domain (§9):
