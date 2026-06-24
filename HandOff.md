@@ -40,10 +40,16 @@
   fixed via AWX CR `extra_settings: CSRF_TRUSTED_ORIGINS=['https://awx.biplextech.com']`
   + awx-web restart; verified web login → 302 + sessionid. See lessons.
 - **TLS CA** trusted on all hosts; browser CA at `~/biplextech-ca.crt`.
-- **DNS:** `.202` dnsmasq STILL DOWN (powered off) → `*.biplextech.com` doesn't
-  resolve LAN-wide. **Interim fix applied on gdragon `/etc/hosts`:
-  awx/openvas.biplextech.com → .203** (so a browser ON gdragon can log in). Other
-  client machines still need their own `/etc/hosts` until `.202` dnsmasq is back.
+- **DNS: `.202` dnsmasq is BACK UP (2026-06-24)** — powered on the `vault-server`
+  VM (ESXi vmid 66), stepped its clock, restarted dnsmasq. Authoritative for
+  `biplextech.com`: apex→.50, node A records, **and added `awx`/`openvas` →
+  .203** (the edge nginx). gdragon resolver now points at .202 (primary) + .254
+  (fallback). `dig @192.168.1.202 awx.biplextech.com` → .203. gdragon `/etc/hosts`
+  awx/openvas→.203 entries KEPT as a resilient local fallback (files > dns in
+  nsswitch) for when the often-rebooted .202 VM is down. Boot-race hardened:
+  switched conf to **bind-dynamic** (+ disabled `bind-interfaces` in default
+  `/etc/dnsmasq.conf`) so dnsmasq survives starting before the NIC has .202.
+  All durable in `ansible/playbooks/dns_biplextech.yml`.
 
 ## Resume here — next steps (in order)
 0. **After boot: FIRST `chronyc makestep` on all nodes** (or run
@@ -52,8 +58,10 @@
 1. **Finish Vault HA:** unseal vault-1/2 (3 keys each) → all 3 unsealed; confirm
    `retry_join` is in the live `vault-config` ConfigMap (ArgoCD synced) for
    reboot-safe auto-rejoin. Then init KV/auth as needed for VSO (wave 4).
-2. **DNS:** bring **.202 dnsmasq** back so `*.biplextech.com` resolves; then
-   per-app Ingress hostnames → apps reachable by URL.
+2. ✅ **DONE — DNS:** `.202` dnsmasq back up + awx/openvas records + gdragon
+   resolver pointed at .202. Remaining: add **per-platform-app** Ingress hostnames
+   under biplextech.com → .50 records (argocd, grafana, vault, …) once those apps
+   are exposed; the zone has no wildcard so each needs an explicit record.
 3. Verify Consul / kube-prometheus / Gatekeeper / VSO / Jenkins converge.
 4. **Durable clock fix** (critical for "reboots often"): disable VMware-Tools
    time sync on the VMs and/or fix the ESXi host clock/NTP.
@@ -157,6 +165,17 @@
 - **kubectl secret with a dotted key:** `jsonpath='{.data.tls\.crt}'` escaping
   breaks through SSH — use `-o go-template='{{index .data "tls.crt"}}'`.
 - **`/etc/hosts` is `IP hostname`** (IP first). User had it reversed → no resolve.
+- **.202 dnsmasq dies on cold boot with `failed to create listening socket for
+  192.168.1.202: Cannot assign requested address`** — it starts before the NIC
+  has the address. Fix = `bind-dynamic` (not `bind-interfaces`), which also
+  requires commenting `bind-interfaces` out of the default `/etc/dnsmasq.conf`
+  (else `cannot set --bind-interfaces and --bind-dynamic`). Both now in
+  `dns_biplextech.yml`. Until a reboot proves it, a manual
+  `ssh ansible@.202 sudo systemctl restart dnsmasq` clears it.
+- **The `biplextech.com` zone has NO wildcard** (`local=/biplextech.com/` →
+  unlisted names NXDOMAIN, not forwarded). Every app hostname needs an explicit
+  record in `dns_biplextech.yml` (awx/openvas → .203 added; platform apps → .50
+  TODO when exposed).
 
 ### Tooling
 - **JSON `kubectl patch -p '{...}'` over SSH** breaks on quoting — pipe a script

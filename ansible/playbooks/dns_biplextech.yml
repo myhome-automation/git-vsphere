@@ -25,6 +25,11 @@
       - { name: lb1, ip: 192.168.1.188 }
       - { name: lb2, ip: 192.168.1.185 }
       - { name: dns, ip: 192.168.1.202 }
+      # gdragon mgmt/security apps are front-ended by the .203 edge nginx
+      # (.203 -> .181 Traefik -> AWX/OpenVAS). local=/biplextech.com/ means
+      # unlisted names NXDOMAIN (not forwarded), so these MUST be explicit.
+      - { name: awx.biplextech.com, ip: 192.168.1.203 }
+      - { name: openvas.biplextech.com, ip: 192.168.1.203 }
   tasks:
     - name: install dnsmasq
       dnf:
@@ -36,6 +41,16 @@
         path: /etc/dnsmasq.hosts.d
         state: directory
         mode: "0755"
+
+    # Rocky 9's /etc/dnsmasq.conf ships `bind-interfaces` uncommented, which
+    # conflicts with our `bind-dynamic` (dnsmasq: "cannot set --bind-interfaces
+    # and --bind-dynamic" -> refuses to start). Disable it in the default conf.
+    - name: disable bind-interfaces in default dnsmasq.conf (conflicts w/ bind-dynamic)
+      replace:
+        path: /etc/dnsmasq.conf
+        regexp: '^bind-interfaces\s*$'
+        replace: '#bind-interfaces  # disabled: biplextech.conf uses bind-dynamic'
+      notify: restart dnsmasq
 
     # The apex entry is written verbatim; short names get the domain suffix via
     # expand-hosts. dnsmasq auto-generates PTR records from these.
@@ -65,7 +80,12 @@
 
           # Listen on loopback + this host's primary address.
           listen-address=127.0.0.1,{{ ansible_default_ipv4.address }}
-          bind-interfaces
+          # bind-dynamic (NOT bind-interfaces): on a cold boot dnsmasq can start
+          # before the .202 address is assigned -> bind-interfaces fails hard with
+          # "Cannot assign requested address". bind-dynamic binds as addresses
+          # appear, so dnsmasq survives the boot race. (Requires bind-interfaces
+          # be disabled in the default /etc/dnsmasq.conf — handled below.)
+          bind-dynamic
 
           # Forward everything else upstream.
           no-resolv
