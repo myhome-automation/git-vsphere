@@ -68,3 +68,4 @@ Workflow run ids (update as launched): see below.
 4. Continue from the first unchecked TODO.
 
 - Workflow run **3** launched 2026-06-23 (node order 15→9→10→11→12→13).
+- Workflow run **6** relaunched 2026-06-23 after fixing JT15 become_enabled=false (EE has no sudo for localhost plays).
