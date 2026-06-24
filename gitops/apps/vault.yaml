@@ -23,6 +23,13 @@ spec:
     server: https://kubernetes.default.svc
     namespace: vault
   syncPolicy:
+    # Vault needs IPC_LOCK (mlock) — exempt the vault namespace from the
+    # cluster-wide PodSecurity 'restricted' default set by k8s_harden.
+    managedNamespaceMetadata:
+      labels:
+        pod-security.kubernetes.io/enforce: privileged
+        pod-security.kubernetes.io/warn: privileged
+        pod-security.kubernetes.io/audit: privileged
     automated:
       prune: true
       selfHeal: true

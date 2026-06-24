@@ -13,7 +13,15 @@
 
 ## 0. Resume here — current state (update every session)
 
-**Last updated:** 2026-06-22 (gdragon mgmt/security host + domain split decided)
+> **▶ READ `HandOff.md` FIRST** — it holds the live current state, the resume
+> next-steps, and the running list of mistakes-made-and-fixed so they are not
+> repeated. This §0 is the high-level plan; `HandOff.md` is the working memory.
+
+**Last updated:** 2026-06-24 — platform built AWX-first; no-NodePort exposure
+(MetalLB→ingress), biplextech.com wildcard TLS, Longhorn storage, Vault vault-0
+unsealed (1/2 pending retry_join). Full detail + lessons in `HandOff.md`.
+
+_(historical plan note, 2026-06-22: gdragon mgmt/security host + domain split)_
 
 **Cluster:** kubeadm v1.36.1, 3 masters + 3 workers, Calico v3.30.4, all Ready.
 Context `homelab`. **No StorageClass yet. No LB controller (by design — external).**
