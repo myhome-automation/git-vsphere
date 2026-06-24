@@ -253,6 +253,38 @@
       until: live.status == 200
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Play 3.9: PERSIST kubelet-required sysctls BEFORE enabling protectKernelDefaults.
+# ─────────────────────────────────────────────────────────────────────────────
+# protectKernelDefaults=true (set in Play 4) makes kubelet ASSERT these host
+# sysctls and REFUSE to start if they don't match — it does NOT set them itself.
+# They were only set at runtime (kubeadm/init) and NOT persisted, so on every
+# REBOOT they reverted to kernel defaults (overcommit_memory=0, panic=0) and
+# kubelet crashlooped: "Failed to start ContainerManager ... invalid kernel flag:
+# vm/overcommit_memory expected 1 actual 0, kernel/panic expected 10 actual 0"
+# -> no static pods -> no apiserver -> whole cluster down on cold boot.
+# Persisting them in /etc/sysctl.d makes systemd-sysctl reapply them at boot.
+- name: k8s_harden | persist kubelet-required sysctls (all k8s nodes)
+  hosts: k8s_masters:k8s_workers
+  become: true
+  tasks:
+    - name: write kubelet sysctl drop-in
+      copy:
+        dest: /etc/sysctl.d/99-kubelet.conf
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          # Required by kubelet (protectKernelDefaults=true). MUST survive reboot,
+          # or kubelet refuses to start. See k8s_harden.yml Play 3.9.
+          vm.overcommit_memory = 1
+          kernel.panic = 10
+          kernel.panic_on_oops = 1
+      register: kubelet_sysctl
+
+    - name: apply the kubelet sysctls now
+      command: sysctl -p /etc/sysctl.d/99-kubelet.conf
+      when: kubelet_sysctl.changed
+
 # Play 4: kubelet hardening (rolling, masters first then workers)
 # ─────────────────────────────────────────────────────────────────────────────
 - name: k8s_harden | kubelet config on masters

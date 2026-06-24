@@ -1,4 +1,4 @@
-# HandOff.md — lessons, current state, resume anchor
+1# HandOff.md — lessons, current state, resume anchor
 
 > **Purpose:** persist what was learned (mistakes + fixes), the current state, and
 > exactly where to resume — so the next session continues cleanly and does NOT
@@ -11,8 +11,15 @@
 
 ---
 
-## Current state (2026-06-24, end of session — POWERED OFF for the day)
+## Current state (2026-06-24 — cluster POWERED UP, converging)
 
+- **Cold-boot brought the cluster back 2026-06-24:** powered off the retired
+  `.202` vault-server VM, powered on the 8 cluster VMs (`cluster_powerup.yml`),
+  `chronyc makestep` all nodes (clocks within ~4 ms). **NEW boot-killer found +
+  fixed: kubelet `protectKernelDefaults` sysctls were not persisted** → kubelet
+  crashlooped on every reboot → no apiserver. Fixed live + in IaC (see lessons,
+  `k8s_harden.yml` Play 3.9, `platform-startup.sh` step 5c). After force-deleting
+  ~72 stale `Unknown` pods, **6/6 Ready**, control plane stable, apps reconciling.
 - **ESXi cluster:** 6/6 Ready, kubeadm 1.36.1, CIS-hardened. Built **AWX-first**.
 - **⚠ CONTROL PLANE WAS CRASHLOOPING — root cause CLOCK SKEW** (kmaster1 was
   **703 s slow** of NTP; ESXi host clock drift). etcd `context deadline exceeded`
@@ -110,6 +117,25 @@
   clock immediately; `chronyc tracking` showed "703 s slow"). **Durable fix
   (TODO):** disable VMware-Tools time sync on the VMs and fix the ESXi host NTP,
   or this recurs every boot. ALWAYS makestep first after a cold boot.
+- **★ kubelet `protectKernelDefaults` sysctls NOT persisted = #2 cold-boot
+  killer (found 2026-06-24).** `k8s_harden.yml` sets `protectKernelDefaults:
+  true`, which makes kubelet **assert** host sysctls and **refuse to start** if
+  they differ (it does NOT set them). They were only set at runtime and never
+  persisted, so every REBOOT reverted them to kernel defaults and kubelet
+  crashlooped: `Failed to start ContainerManager ... invalid kernel flag:
+  vm/overcommit_memory expected 1 actual 0, kernel/panic expected 10 actual 0`
+  → no static pods → no apiserver → whole cluster down (looked like clock skew,
+  was NOT). **Fix (durable, done):** persist them in `/etc/sysctl.d/99-kubelet.conf`
+  (`vm.overcommit_memory=1`, `kernel.panic=10`, `kernel.panic_on_oops=1`) — added
+  to `k8s_harden.yml` Play 3.9 (coupled with protectKernelDefaults) AND re-asserted
+  by `platform-startup.sh` step 5c as a safety net. Check on a stuck boot:
+  `journalctl -u kubelet | grep ContainerManager`; kubelet shows `activating`.
+- **After an ungraceful/cold reboot, ~dozens of pods stick in `Unknown`** (their
+  node went down hard; controllers can't replace them until the dead pod object
+  is gone). Recover: force-delete them so Deployments/DaemonSets/StatefulSets
+  recreate fresh —
+  `kubectl get po -A | awk '$4=="Unknown"{print $1,$2}' | while read ns p; do kubectl delete po -n $ns $p --force --grace-period=0; done`.
+  StatefulSets (vault/consul/etcd) re-attach the same PVC; Vault comes back sealed.
 - **ESXi maintenance mode = silent power-on killer.** Always
   `vim-cmd hostsvc/maintenance_mode_exit` before powering VMs.
 - **"No route to host" on the SAME subnet = ARP failure = the target VM is

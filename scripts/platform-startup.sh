@@ -51,6 +51,24 @@ for ip in 188 185 186 189 187 182 183 184; do
     ansible@192.168.1.$ip 'sudo chronyc makestep >/dev/null 2>&1 && echo "  .'$ip' stepped"' 2>&1 || true
 done
 
+echo "== 5c/8  ENSURE kubelet-required sysctls on every k8s node (CRITICAL) =="
+# kubelet runs with protectKernelDefaults=true (k8s_harden.yml) -> it ASSERTS
+# these host sysctls and REFUSES to start if they don't match. They are NOT
+# persisted by kubeadm, so on a cold boot they revert to kernel defaults and
+# kubelet crashloops ("invalid kernel flag: vm/overcommit_memory expected 1
+# actual 0, kernel/panic expected 10 actual 0") -> no static pods -> no
+# apiserver -> whole cluster down. k8s_harden.yml now persists them in
+# /etc/sysctl.d/99-kubelet.conf; this re-asserts + restarts kubelet as a safety
+# net BEFORE we wait on the API. k8s nodes only (NOT the LBs .188/.185).
+for ip in 186 189 187 182 183 184; do
+  timeout 25 ssh -o StrictHostKeyChecking=no -o ConnectTimeout=8 -i "$KEY" \
+    ansible@192.168.1.$ip 'sudo bash -c "
+      printf \"vm.overcommit_memory = 1\nkernel.panic = 10\nkernel.panic_on_oops = 1\n\" > /etc/sysctl.d/99-kubelet.conf
+      sysctl -p /etc/sysctl.d/99-kubelet.conf >/dev/null 2>&1
+      systemctl is-active --quiet kubelet || systemctl restart kubelet
+      echo \"  .'$ip' kubelet=\$(systemctl is-active kubelet)\""' 2>&1 || echo "  .$ip unreachable"
+done
+
 echo "== wait for k8s API (VIP 192.168.1.50:6443) =="
 for _ in $(seq 1 30); do k get nodes >/dev/null 2>&1 && break; sleep 10; done
 k get nodes || echo "  WARN: k8s API not ready yet — re-check clocks (chronyc tracking)"
