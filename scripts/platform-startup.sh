@@ -32,21 +32,21 @@ echo "== 1/8  ESXi host: clear maintenance mode (silent power-on killer) =="
 ssh -o StrictHostKeyChecking=no root@"$ESXI" \
   'vim-cmd hostsvc/maintenance_mode_exit 2>/dev/null; vim-cmd hostsvc/runtimeinfo | grep -i maintenance'
 
-echo "== 2-5/8  Power on the 9 VMs in order (vault-server -> lb -> masters -> workers) =="
-# all_powerup.yml: vault-server first, then cluster_powerup (lb1,lb2,masters,workers),
-# waits for SSH on each, chronyc makestep, probes k8s API + DNS via the VIP.
-# NOTE: DNS no longer depends on vault-server (.202) — it's on the always-on .203
-# edge box now (2026-06-24). vault-server has no active role; powering it on is
-# harmless and can be dropped from all_powerup.yml later.
+echo "== 2-5/8  Power on the 8 cluster VMs (lb -> masters -> workers) =="
+# cluster_powerup.yml: lb1,lb2,masters,workers; waits for SSH on each.
+# vault-server (.202) is POWERED OFF / decommissioned (2026-06-24) — its DNS role
+# moved to the always-on .203 edge box, Vault runs in-cluster, and its RAM/CPU is
+# reserved for boosting the cluster later. Use all_powerup.yml only if you ever
+# need to revive that VM.
 cd "$ANS"
-ANSIBLE_CONFIG="$PWD/ansible.cfg" ansible-playbook playbooks/all_powerup.yml || {
+ANSIBLE_CONFIG="$PWD/ansible.cfg" ansible-playbook playbooks/cluster_powerup.yml || {
   echo "powerup playbook failed — check ESXi + VM state"; exit 1; }
 
 echo "== 5b/8  FORCE CLOCK STEP on every node (CRITICAL) =="
 # The ESXi host clock drifts; VMware-Tools syncs VMs to the wrong time on boot.
 # Even a few minutes of skew makes etcd time out -> apiservers CrashLoopBackOff
 # -> cluster-wide Forbidden. Step the clock BEFORE expecting k8s to be healthy.
-for ip in 202 188 185 186 189 187 182 183 184; do
+for ip in 188 185 186 189 187 182 183 184; do
   timeout 15 ssh -o StrictHostKeyChecking=no -o ConnectTimeout=8 -i "$KEY" \
     ansible@192.168.1.$ip 'sudo chronyc makestep >/dev/null 2>&1 && echo "  .'$ip' stepped"' 2>&1 || true
 done
