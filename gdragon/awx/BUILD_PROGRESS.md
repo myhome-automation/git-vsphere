@@ -122,3 +122,18 @@ ArgoCD installed + root app-of-apps applied → waves 0–9 reconciling async.
 - Edge chain confirmed up: VIP .50 -> HAProxy -> MetalLB .51 -> ingress-nginx.
 - STILL PENDING (not TLS): Longhorn StorageClass (stateful apps Pending);
   per-app Ingress hosts + *.biplextech.com DNS (.202 dnsmasq was down).
+
+## 2026-06-23 — Longhorn storage FIXED
+- Root cause: ArgoCD<->Longhorn pre-upgrade hook deadlock. The pre-upgrade Job
+  is a PreSync hook needing longhorn-service-account, which only the MAIN sync
+  creates (after PreSync) -> 0 pods, Job never completes, ArgoCD stuck forever
+  "waiting for completion of hook longhorn-pre-upgrade".
+- Fix: preUpgradeChecker.jobEnabled=false (the chart's OWN documented ArgoCD
+  fix; verified renders 0 hooks). ArgoCD was frozen in the old op, so: removed
+  app finalizer, deleted the longhorn Application + force-deleted stuck job,
+  re-applied fresh -> clean install.
+- RESULT: longhorn Synced/Healthy, 21 pods Running, **StorageClass `longhorn`
+  (default)** + longhorn-static. All stateful PVCs now BOUND: vault (data+audit),
+  consul (3 servers), monitoring (prometheus 15Gi, grafana 5Gi, alertmanager).
+- Downstream now progressing: vault (Progressing, will be SEALED -> unseal),
+  consul/kube-prometheus settling as pods start on bound PVCs.
