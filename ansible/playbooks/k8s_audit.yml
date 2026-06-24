@@ -32,6 +32,18 @@
       shell: "{{ kubectl }} create namespace {{ ns }} --dry-run=client -o yaml | {{ kubectl }} apply -f -"
       changed_when: true
 
+    # After k8s_harden.yml sets the cluster-wide PodSecurity default to
+    # `restricted`, kube-bench's pods (hostPID + hostPath into /etc/kubernetes,
+    # /var/lib/etcd, /var/lib/kubelet) are rejected. kube-bench legitimately
+    # needs that host access, so exempt its transient namespace.
+    - name: exempt kube-bench namespace from PodSecurity (privileged)
+      shell: >
+        {{ kubectl }} label namespace {{ ns }}
+        pod-security.kubernetes.io/enforce=privileged
+        pod-security.kubernetes.io/warn=privileged
+        pod-security.kubernetes.io/audit=privileged --overwrite
+      changed_when: true
+
     - name: render kube-bench master job
       copy:
         dest: /tmp/kube-bench-master.yaml
