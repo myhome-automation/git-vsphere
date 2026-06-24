@@ -15,11 +15,38 @@
 
 - **Cold-boot brought the cluster back 2026-06-24:** powered off the retired
   `.202` vault-server VM, powered on the 8 cluster VMs (`cluster_powerup.yml`),
-  `chronyc makestep` all nodes (clocks within ~4 ms). **NEW boot-killer found +
-  fixed: kubelet `protectKernelDefaults` sysctls were not persisted** → kubelet
-  crashlooped on every reboot → no apiserver. Fixed live + in IaC (see lessons,
-  `k8s_harden.yml` Play 3.9, `platform-startup.sh` step 5c). After force-deleting
-  ~72 stale `Unknown` pods, **6/6 Ready**, control plane stable, apps reconciling.
+  `chronyc makestep` all nodes. **THREE boot-killers found + fixed durably:**
+  (1) kubelet `protectKernelDefaults` sysctls not persisted → kubelet crashloop
+  (`k8s_harden.yml` Play 3.9 + `platform-startup.sh` 5c). (2) **Clock skew RECURS**
+  — VMware-Tools periodic sync pulled VMs back to the drifted ESXi host clock
+  (~370 s) minutes after makestep → DURABLE FIX: `vmware-toolbox-cmd timesync
+  disable` on all VMs (now in `base.yml`, TODO confirm committed) + makestep at
+  boot. (3) Vault sealed-pod crashloop (tight liveness probe) → tolerant probes
+  in `gitops/values/vault.yaml`. Force-deleted ~72 stale `Unknown` pods.
+- **⚠ STILL UNSTABLE AT SESSION PAUSE (2026-06-24 ~18:00):** after heavy churn
+  (ArgoCD controller/repo-server/redis restarts, kube-proxy/calico restarts on
+  kworker2/3), **kmaster1 + kmaster3 went NotReady and masters became
+  SSH-unresponsive** (overloaded on constrained HW) → transient cluster-wide
+  `Forbidden` (1/3 apiservers). LET IT SETTLE before more changes; re-verify
+  `kubectl get nodes` = 6/6 Ready first. kworker2/kworker3 had broken pod→ClusterIP
+  (10.96.0.1) networking post-boot (ArgoCD controller + vault-1/2 exec hung there)
+  — restarted kube-proxy+calico-node on both; recheck.
+- **Vault: vault-0 UNSEALED + ACTIVE leader (operational).** vault-1/2 HA unseal
+  BLOCKED: fresh-PVC raft followers fail unseal with `failed to create cipher:
+  crypto/aes: invalid key size 0` (seal config not synced from leader on join).
+  **Proper fix = AUTO-UNSEAL (transit/KMS)** — also removes the manual-key
+  security smell. Manual shamir unseal here is fragile (re-seals every restart).
+- **GitOps app status (last seen):** Synced/Healthy = cert-manager(+issuers),
+  gatekeeper(OPA), ingress-nginx, longhorn, metallb(+config), consul, vault.
+  jenkins = Synced/**Progressing** (fixed `controller.admin.username`, deploying).
+  kube-prometheus-stack = **Degraded** (duplicate `kps-*` + `kube-prometheus-stack-*`
+  releases — orphans to prune). vault-secrets-operator = **Missing** (stuck
+  `upgrade-crds` hook deleted; re-syncing). platform-root OutOfSync (app-of-apps).
+- **URLs (path-based on `biplextech.com`, VIP .50 → ingress .51, wildcard TLS):**
+  ArgoCD/Consul `/consul`/Vault `/vault`/Longhorn `/longhorn`/Jenkins `/jenkins`.
+- **NOT YET DONE:** GitHub App pipeline (net-new), Consul service-mesh demo
+  wiring (mesh control plane IS up: 3 servers + connect-injector), VSO secret
+  sync config, full Vault HA. Multi-session effort.
 - **ESXi cluster:** 6/6 Ready, kubeadm 1.36.1, CIS-hardened. Built **AWX-first**.
 - **⚠ CONTROL PLANE WAS CRASHLOOPING — root cause CLOCK SKEW** (kmaster1 was
   **703 s slow** of NTP; ESXi host clock drift). etcd `context deadline exceeded`
@@ -114,9 +141,12 @@
   reads → apiserver `storage readiness` timeout → all 3 apiservers CrashLoopBackOff
   → intermittent cluster-wide `Forbidden`. Symptom looked like RBAC/apiserver
   death but was TIME. **Fix:** `sudo chronyc makestep` on every node (steps the
-  clock immediately; `chronyc tracking` showed "703 s slow"). **Durable fix
-  (TODO):** disable VMware-Tools time sync on the VMs and fix the ESXi host NTP,
-  or this recurs every boot. ALWAYS makestep first after a cold boot.
+  clock immediately; `chronyc tracking` showed "703 s slow"). **Durable fix DONE
+  (2026-06-24):** VMware-Tools PERIODIC sync was re-skewing the VMs ~370 s minutes
+  after each makestep → disabled it on all VMs (`vmware-toolbox-cmd timesync
+  disable`, persists in tools.conf) so chrony/NTP is the SOLE time source; baked
+  into `ansible/playbooks/base.yml`. Still `makestep` at boot (start.sh) to clear
+  any boot-time sync. ESXi host NTP itself still drifts but no longer affects VMs.
 - **★ kubelet `protectKernelDefaults` sysctls NOT persisted = #2 cold-boot
   killer (found 2026-06-24).** `k8s_harden.yml` sets `protectKernelDefaults:
   true`, which makes kubelet **assert** host sysctls and **refuse to start** if
@@ -136,6 +166,18 @@
   recreate fresh —
   `kubectl get po -A | awk '$4=="Unknown"{print $1,$2}' | while read ns p; do kubectl delete po -n $ns $p --force --grace-period=0; done`.
   StatefulSets (vault/consul/etcd) re-attach the same PVC; Vault comes back sealed.
+- **Post-reboot: pod→ClusterIP (10.96.0.1) can break on SOME nodes** (saw
+  kworker2/kworker3): pods there hang on API-service access (ArgoCD controller
+  CrashLoop/NotReady; `kubectl exec` into pods on those nodes hangs). Host-level
+  firewalld/calico-fwd looked fine; fix = restart `kube-proxy` + `calico-node`
+  on the affected node (`kubectl delete pod -l k8s-app=kube-proxy --field-selector
+  spec.nodeName=<n>`). Diagnose: exec a pod on a GOOD node vs BAD node:
+  `wget -qO- https://10.96.0.1:443/healthz --no-check-certificate`.
+- **Don't over-restart ArgoCD on this small cluster.** Restarting
+  controller+repo-server+redis to clear a manifest cache spiked load and helped
+  push masters to NotReady. To pick up a new git commit, prefer a hard refresh
+  (`kubectl annotate app … argocd.argoproj.io/refresh=hard`) and patience; only
+  restart repo-server if a stale manifest truly persists.
 - **ESXi maintenance mode = silent power-on killer.** Always
   `vim-cmd hostsvc/maintenance_mode_exit` before powering VMs.
 - **"No route to host" on the SAME subnet = ARP failure = the target VM is

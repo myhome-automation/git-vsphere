@@ -135,6 +135,25 @@
         state: started
         enabled: true
 
+    # ── DURABLE CLOCK FIX (★ #1 cold-boot killer) ──────────────────────────
+    # The ESXi host clock drifts; VMware-Tools PERIODIC time sync then drags the
+    # guest back to that wrong time every ~60 s, re-creating multi-minute skew
+    # AFTER chrony has corrected it (saw ~370 s minutes after `chronyc makestep`).
+    # Skew -> etcd "context deadline exceeded" -> apiservers CrashLoopBackOff ->
+    # cluster-wide Forbidden. FIX: disable VMware-Tools time sync so chrony (NTP)
+    # is the sole time authority; persists in /etc/vmware-tools/tools.conf.
+    - name: disable VMware-Tools periodic time sync (chrony is sole time source)
+      command: vmware-toolbox-cmd timesync disable
+      register: vmtimesync
+      changed_when: "'Disabled' not in vmtimesync.stdout"
+      failed_when: false
+
+    - name: ensure chronyd is enabled + running (authoritative time)
+      systemd:
+        name: chronyd
+        state: started
+        enabled: true
+
   handlers:
     - name: restart sshd
       systemd:
