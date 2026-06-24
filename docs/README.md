@@ -11,6 +11,7 @@ you're debugging.
 | **[deployment.md](deployment.md)** | **End-to-end deployment runbook: clone-from-vault → site.yml → verification checklist** |
 | **[restart-sequence.md](restart-sequence.md)** | **Safe power-down / power-up order with NTP clock-step + post-powerup health probe (use `all_powerup.yml` / `all_shutdown.yml`)** |
 | [k8s-cluster.md](k8s-cluster.md) | kubeadm preflight, containerd CRI, flannel, k8s repo channel, HA LB API VIP |
+| [k8s-hardening.md](k8s-hardening.md) | Production-grade hardening (phase 1): secrets encryption-at-rest, audit logging, kubelet hardening, PodSecurity, kube-bench CIS scan |
 | [calico.md](calico.md) | Calico/Tigera operator, firewalld blocking BGP, ippools stale-status, CIDR coupling |
 | [vault-server.md](vault-server.md) | vault-server as clone source, vmkfstools clone pitfalls, NFC leases, ovftool task locks |
 | [haproxy.md](haproxy.md) | HAProxy on Rocky 9: SELinux bind, single-LB keepalived, interface auto-detect |

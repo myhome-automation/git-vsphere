@@ -17,9 +17,13 @@
 > next-steps, and the running list of mistakes-made-and-fixed so they are not
 > repeated. This §0 is the high-level plan; `HandOff.md` is the working memory.
 
-**Last updated:** 2026-06-24 — platform built AWX-first; no-NodePort exposure
-(MetalLB→ingress), biplextech.com wildcard TLS, Longhorn storage, Vault vault-0
-unsealed (1/2 pending retry_join). Full detail + lessons in `HandOff.md`.
+**Last updated:** 2026-06-24 (end of session, powered off) — platform built
+AWX-first; no-NodePort exposure (MetalLB→ingress), biplextech.com wildcard TLS,
+Longhorn storage. Vault: vault-0 unsealed leader, vault-1/2 joined raft but
+SEALED. **⚠ Clock skew (ESXi drift) crashlooped the control plane — fixed with
+`chronyc makestep`; recurs every boot until VMware-Tools time sync is fixed.
+After any boot run `chronyc makestep` first (or `scripts/platform-startup.sh`).**
+Full detail + lessons + resume steps in `HandOff.md`.
 
 _(historical plan note, 2026-06-22: gdragon mgmt/security host + domain split)_
 

@@ -11,29 +11,44 @@
 
 ---
 
-## Current state (2026-06-24)
+## Current state (2026-06-24, end of session — POWERED OFF for the day)
 
 - **ESXi cluster:** 6/6 Ready, kubeadm 1.36.1, CIS-hardened. Built **AWX-first**.
-- **Exposure chain UP (no NodePort):** Cloudflare → HAProxy (keepalived VIP
-  **.50**) → MetalLB **.51** (ingress-nginx) → ingress-nginx. VIP `:443` serves
-  the `*.biplextech.com` wildcard (cert-manager `biplextech-ca`), CA-verified.
+- **⚠ CONTROL PLANE WAS CRASHLOOPING — root cause CLOCK SKEW** (kmaster1 was
+  **703 s slow** of NTP; ESXi host clock drift). etcd `context deadline exceeded`
+  → all 3 apiservers CrashLoopBackOff → intermittent `Forbidden`. **FIXED** with
+  `chronyc makestep` on all nodes; apiservers stable (restarts frozen), 6/6 Ready.
+  **This WILL recur on every boot** until ESXi host clock / VMware-Tools time sync
+  is fixed — see lessons. `platform-startup.sh` now makesteps early.
+- **Exposure chain UP (no NodePort):** Cloudflare → HAProxy (VIP **.50**) →
+  MetalLB **.51** (ingress-nginx) → ingress-nginx. VIP `:443` serves the
+  `*.biplextech.com` wildcard (cert-manager `biplextech-ca`), CA-verified.
 - **Storage:** Longhorn default StorageClass `longhorn`; all stateful PVCs Bound.
-- **Vault:** vault-0 **initialized + unsealed** (Raft leader). vault-1/2 **NOT
-  joined yet** — `retry_join` just added to values; needs sync→restart→unseal.
-  Keys: `~/.vault/biplextech-init.json` on gdragon (chmod 600, **NEVER commit**).
-- **AWX + OpenVAS:** working at `https://awx.biplextech.com` /
-  `https://openvas.biplextech.com` (via .203 nginx → .181 Traefik), admin /
-  `Nepal!@3`.
+- **Vault:** vault-0 **unsealed, Raft leader**. vault-1/2 **JOINED the raft**
+  (3 peers: vault-0 leader, vault-1/2 followers) **but still SEALED** — unseal
+  didn't complete; redo unseal next session. Keys:
+  `~/.vault/biplextech-init.json` on gdragon (chmod 600, **NEVER commit**).
+  `retry_join` is in git (`gitops/values/vault.yaml`) but **NOT yet in the live
+  ConfigMap** (ArgoCD hadn't synced it) — confirm it syncs so vault-1/2 rejoin
+  after reboot.
+- **AWX + OpenVAS:** `https://awx.biplextech.com` / `https://openvas.biplextech.com`
+  (via .203 nginx → .181 Traefik), admin / `Nepal!@3`.
 - **TLS CA** trusted on all hosts; browser CA at `~/biplextech-ca.crt`.
 - **DNS:** `.202` dnsmasq DOWN → `*.biplextech.com` doesn't resolve LAN-wide; use
   `/etc/hosts` meanwhile (platform→.50, awx/openvas→.203).
 
 ## Resume here — next steps (in order)
-1. **Finish Vault HA:** sync the vault app (picks up `retry_join`), restart the
-   StatefulSet, unseal all 3, verify `raft list-peers` shows 3.
-2. **Per-app Ingress hostnames** + bring **.202 dnsmasq** back so
-   `*.biplextech.com` resolves; then apps reachable by URL.
+0. **After boot: FIRST `chronyc makestep` on all nodes** (or run
+   `scripts/platform-startup.sh`) — else etcd/apiserver crashloop (clock skew).
+   Verify 6/6 Ready + apiserver restarts not climbing before anything else.
+1. **Finish Vault HA:** unseal vault-1/2 (3 keys each) → all 3 unsealed; confirm
+   `retry_join` is in the live `vault-config` ConfigMap (ArgoCD synced) for
+   reboot-safe auto-rejoin. Then init KV/auth as needed for VSO (wave 4).
+2. **DNS:** bring **.202 dnsmasq** back so `*.biplextech.com` resolves; then
+   per-app Ingress hostnames → apps reachable by URL.
 3. Verify Consul / kube-prometheus / Gatekeeper / VSO / Jenkins converge.
+4. **Durable clock fix** (critical for "reboots often"): disable VMware-Tools
+   time sync on the VMs and/or fix the ESXi host clock/NTP.
 
 ---
 
@@ -56,7 +71,24 @@
 
 ### Host / infra
 - **`sudo` secure_path excludes `/usr/local/bin`** → call k3s as
-  `sudo /usr/local/bin/k3s kubectl ...` (full path).
+  `sudo /usr/local/bin/k3s kubectl ...` (full path). Same for **`crictl`** on the
+  ESXi masters — `sudo crictl ...` returns "command not found", so a
+  `crictl ps | grep -c apiserver` reads **0** and looks like the apiserver is
+  down (FALSE ALARM). Use the full path / verify via `kubectl get` instead.
+- **Transient `Forbidden` for `kubernetes-admin` (system:masters) is usually a
+  restarting apiserver behind the VIP**, NOT a real RBAC break. With 3 apiservers
+  behind keepalived/HAProxy, while one is restarting (e.g. hardening/encryption
+  roll) ~1/3 of requests hit it and get 403 until its RBAC authorizer syncs.
+  Don't panic-edit RBAC — re-test (`kubectl auth can-i ...`); it clears itself.
+- **★ CLOCK SKEW = the #1 cluster killer here.** The ESXi host clock drifts (a
+  known long-standing issue); VMware-Tools then syncs the VMs to that wrong time
+  on boot. A ~12-min skew made etcd return `context deadline exceeded` on KV
+  reads → apiserver `storage readiness` timeout → all 3 apiservers CrashLoopBackOff
+  → intermittent cluster-wide `Forbidden`. Symptom looked like RBAC/apiserver
+  death but was TIME. **Fix:** `sudo chronyc makestep` on every node (steps the
+  clock immediately; `chronyc tracking` showed "703 s slow"). **Durable fix
+  (TODO):** disable VMware-Tools time sync on the VMs and fix the ESXi host NTP,
+  or this recurs every boot. ALWAYS makestep first after a cold boot.
 - **ESXi maintenance mode = silent power-on killer.** Always
   `vim-cmd hostsvc/maintenance_mode_exit` before powering VMs.
 - **"No route to host" on the SAME subnet = ARP failure = the target VM is

@@ -37,9 +37,18 @@ cd "$ANS"
 ANSIBLE_CONFIG="$PWD/ansible.cfg" ansible-playbook playbooks/all_powerup.yml || {
   echo "powerup playbook failed — check ESXi + VM state"; exit 1; }
 
+echo "== 5b/8  FORCE CLOCK STEP on every node (CRITICAL) =="
+# The ESXi host clock drifts; VMware-Tools syncs VMs to the wrong time on boot.
+# Even a few minutes of skew makes etcd time out -> apiservers CrashLoopBackOff
+# -> cluster-wide Forbidden. Step the clock BEFORE expecting k8s to be healthy.
+for ip in 202 188 185 186 189 187 182 183 184; do
+  timeout 15 ssh -o StrictHostKeyChecking=no -o ConnectTimeout=8 -i "$KEY" \
+    ansible@192.168.1.$ip 'sudo chronyc makestep >/dev/null 2>&1 && echo "  .'$ip' stepped"' 2>&1 || true
+done
+
 echo "== wait for k8s API (VIP 192.168.1.50:6443) =="
 for _ in $(seq 1 30); do k get nodes >/dev/null 2>&1 && break; sleep 10; done
-k get nodes || echo "  WARN: k8s API not ready yet"
+k get nodes || echo "  WARN: k8s API not ready yet — re-check clocks (chronyc tracking)"
 
 echo "== 6/8  Wait for GitOps storage + ingress (MetalLB -> Longhorn -> ingress .51) =="
 for _ in $(seq 1 40); do

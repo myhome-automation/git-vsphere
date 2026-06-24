@@ -137,3 +137,14 @@ ArgoCD installed + root app-of-apps applied → waves 0–9 reconciling async.
   consul (3 servers), monitoring (prometheus 15Gi, grafana 5Gi, alertmanager).
 - Downstream now progressing: vault (Progressing, will be SEALED -> unseal),
   consul/kube-prometheus settling as pods start on bound PVCs.
+
+## 2026-06-24 END OF SESSION (powered off for the day)
+- ★ ROOT CAUSE of flakiness = CLOCK SKEW. ESXi host clock drift -> VMware-Tools
+  synced VMs to wrong time -> kmaster1 703s slow -> etcd deadline exceeded ->
+  all 3 apiservers CrashLoopBackOff -> cluster-wide intermittent Forbidden.
+  FIXED: chronyc makestep on all nodes; control plane stable (6/6 Ready).
+  platform-startup.sh updated to makestep BEFORE waiting on k8s. Durable fix TODO:
+  disable VMware-Tools time sync + fix ESXi NTP (recurs every boot).
+- Vault: vault-0 unsealed leader; vault-1/2 raft-joined (3 peers) but SEALED
+  (redo unseal next time). retry_join in git, not yet in live ConfigMap.
+- RESUME: arch.md §0 -> HandOff.md -> this file. After boot, makestep FIRST.
