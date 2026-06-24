@@ -1,4 +1,71 @@
-# Architecture — Home Lab Kubernetes on ESXi
+ Architecture — Home Lab Kubernetes on ESXi
+
+> ## ✅ CURRENT PLATFORM ARCHITECTURE — 2026-06-23 (supersedes older sections below)
+>
+> The bare kubeadm cluster is now a **GitOps-managed platform**, built and
+> operated **AWX-first** (AWX orchestrates Ansible; ArgoCD app-of-apps then runs
+> the in-cluster platform). The sections further down are **historical** (k3s-era
+> monitoring/Vault/ArgoCD on .181) — kept for reference only.
+>
+> ### Hosts / tiers
+> | Tier | Host | Role |
+> |---|---|---|
+> | ESXi hypervisor | 192.168.1.174 | 9 platform VMs |
+> | k8s control plane | kmaster1/2/3 (.186/.189/.187) | kubeadm 1.36.1, CIS-hardened |
+> | k8s workers | kworker1/2/3 (.182/.183/.184) | platform workloads |
+> | Edge LB pair | lb1 .188 (VIP MASTER) / lb2 .185 (BACKUP) | HAProxy + keepalived VIP **.50** + dnsmasq |
+> | DNS | vault-server **.202** | authoritative for biplextech.com |
+> | Mgmt/security | gdragon **.181** | single-node **k3s**: AWX + OpenVAS; Ansible/Terraform control; repo host |
+> | Edge proxy | gdragon-edge **.203** | Ubuntu, system nginx → AWX/OpenVAS (HTTPS) |
+>
+> ### North-south exposure — NO NodePort
+> ```
+> Cloudflare → HAProxy (keepalived VIP 192.168.1.50, lb1/lb2)
+>            → MetalLB LoadBalancer IP 192.168.1.51 (ingress-nginx)
+>            → ingress-nginx (TLS, *.biplextech.com wildcard)
+>            → app
+> ```
+> - **MetalLB** L2, pool `192.168.1.51-.60`, ingress-nginx pinned `.51` (no NodePort).
+> - **TLS**: cert-manager internal CA `biplextech-ca` → wildcard `*.biplextech.com`
+>   (`biplextech-tls`); ingress `default-ssl-certificate` + force-HTTPS → every app
+>   is HTTPS with one cert. CA trusted on all hosts (`tls_distribute_ca.yml`); CA
+>   for browsers at `~/biplextech-ca.crt`.
+> - **AWX/OpenVAS** are on gdragon k3s (separate), exposed via **k3s Traefik
+>   Ingress** + **nginx on .203** (HTTPS, same wildcard cert) — NOT via the ESXi LB.
+>
+> ### GitOps app-of-apps (ArgoCD, sync-wave order)
+> `-2 MetalLB · -1 MetalLB pool · 0 Longhorn(StorageClass) · 1 cert-manager +
+> ingress-nginx · 2 cert-manager-issuers · 3 Vault(HA Raft) · 4 Vault-Secrets-
+> Operator · 5 Consul · 6 OPA Gatekeeper · 7 kube-prometheus-stack · 8 Jenkins`.
+> Bootstrapped by `ansible/playbooks/argocd_bootstrap_awx.yml` (runs on kmaster1).
+> Storage = **Longhorn** (default StorageClass; hostPath, no storage cycle).
+>
+> ### Cold-boot safety (home server reboots often)
+> No circular deadlocks: webhooks that touch general pods are `failurePolicy:
+> Ignore` (Consul, ingress-nginx); ArgoCD has no PVC; Longhorn needs no
+> StorageClass; infra namespaces are PSA-`privileged`. Full design + the one
+> manual step (Vault unseal-on-boot) in **[cold-boot-resilience.md](cold-boot-resilience.md)**.
+>
+> ### Startup / shutdown (ordered)
+> - **Up:** `scripts/platform-startup.sh` — ESXi maint-exit → power VMs
+>   (DNS→LB→masters→workers) → wait k8s → wait GitOps (MetalLB→Longhorn→ingress
+>   .51) → **unseal Vault** → verify gdragon k3s + .203 nginx.
+> - **Down:** `scripts/platform-shutdown.sh` — reverse order (workers→masters→LB→DNS).
+>
+> ### Endpoints (login & verify)
+> | App | URL | Creds | Notes |
+> |---|---|---|---|
+> | AWX | https://awx.biplextech.com (→.203→.181 Traefik) | admin / `Nepal!@3` | working |
+> | OpenVAS | https://openvas.biplextech.com | admin / `Nepal!@3` | working |
+> | Platform apps | `https://<app>.biplextech.com` or `https://biplextech.com/<app>` via VIP .50 | per-app (ArgoCD: `argocd-initial-admin-secret`; Grafana: chart values) | needs DNS + each app's Ingress host; reconciling |
+> | Vault | via ingress once unsealed | root token in `~/.vault/biplextech-init.json` | sealed on boot |
+> | k8s API | https://192.168.1.50:6443 | `~/.kube/config` ctx homelab | — |
+>
+> **DNS reminder:** `*.biplextech.com` must resolve — platform names → `.50`,
+> `awx`/`openvas` → `.203`. Authoritative on `.202` (dnsmasq); until that's up
+> use `/etc/hosts` (`IP hostname` order!).
+>
+> ---
 
 > ### ⚠ Topology change — 2026-06-19
 > The **single-node k3s on `gdragon` (192.168.1.181) was decommissioned.**
