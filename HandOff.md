@@ -32,10 +32,15 @@
   ConfigMap** (ArgoCD hadn't synced it) — confirm it syncs so vault-1/2 rejoin
   after reboot.
 - **AWX + OpenVAS:** `https://awx.biplextech.com` / `https://openvas.biplextech.com`
-  (via .203 nginx → .181 Traefik), admin / `Nepal!@3`.
+  (via .203 nginx → .181 Traefik), admin / `Nepal!@3`. **Both verified loginable
+  2026-06-24 (next session):** AWX token POST → 201; OpenVAS admin pw re-set on the
+  live gvmd (`gvmd --user=admin --new-password`) and verified via `gvm-cli ...
+  socket <get_version/>` → status 200. (Login blocker was DNS, not creds — see below.)
 - **TLS CA** trusted on all hosts; browser CA at `~/biplextech-ca.crt`.
-- **DNS:** `.202` dnsmasq DOWN → `*.biplextech.com` doesn't resolve LAN-wide; use
-  `/etc/hosts` meanwhile (platform→.50, awx/openvas→.203).
+- **DNS:** `.202` dnsmasq STILL DOWN (powered off) → `*.biplextech.com` doesn't
+  resolve LAN-wide. **Interim fix applied on gdragon `/etc/hosts`:
+  awx/openvas.biplextech.com → .203** (so a browser ON gdragon can log in). Other
+  client machines still need their own `/etc/hosts` until `.202` dnsmasq is back.
 
 ## Resume here — next steps (in order)
 0. **After boot: FIRST `chronyc makestep` on all nodes** (or run
@@ -123,6 +128,16 @@
   `http2 on;` directive is unknown (1.25.1+ only).
 - **Re-applying `gdragon/openvas/openvas.yaml` reset the admin Secret to the
   placeholder.** After any manifest apply, re-patch the live OpenVAS password.
+  Also: the `openvas-admin` Secret (envFrom, keys **USERNAME/PASSWORD**) only sets
+  the gvmd admin password on **first DB init** — after that the live gvmd password
+  is independent. To (re)set it authoritatively: `gvmd --user=admin
+  --new-password='…'` **run as the `gvm` user** (`su -s /bin/bash gvm -c …`); as
+  root it fails `semaphore_op: Permission denied`. The user is `gvm`, NOT `gvmd`.
+- **Verifying OpenVAS creds via curl is misleading:** raw `POST /gmp cmd=login`
+  returns 401 `<gsad_response>Token missing or bad` even with correct creds —
+  GSA's React SPA does a CSRF-token login flow curl doesn't replicate. Verify
+  creds the real way: `gvm-cli --gmp-username admin --gmp-password '…' socket
+  --socketpath /run/gvmd/gvmd.sock --xml '<get_version/>'` → `status="200"`.
 - **kubectl secret with a dotted key:** `jsonpath='{.data.tls\.crt}'` escaping
   breaks through SSH — use `-o go-template='{{index .data "tls.crt"}}'`.
 - **`/etc/hosts` is `IP hostname`** (IP first). User had it reversed → no resolve.
