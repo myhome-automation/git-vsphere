@@ -97,3 +97,14 @@ ArgoCD installed + root app-of-apps applied → waves 0–9 reconciling async.
   Ingress on .181; system nginx on .203 reverse-proxies awx/openvas.biplextech.com
   -> .181 Traefik. Verified 200 end-to-end through .203. NO NodePort on gdragon.
   OpenVAS secret repatched to live pw after manifest apply reset it to placeholder.
+
+## 2026-06-23 late — deadlock hardening + AWX endpoint change
+- AWX endpoint CHANGED: NodePort :30080 removed (AWX now ClusterIP+Traefik).
+  Drive AWX via: curl -H 'Host: awx.biplextech.com' http://192.168.1.181/api/...
+- Cold-boot deadlock fixes (committed): consul connectInject failurePolicy=Ignore
+  (was wedging ALL pod creation), ingress-nginx admission failurePolicy=Ignore,
+  longhorn preUpgradeChecker.jobEnabled=false, PSA privileged on metallb-system
+  + longhorn-system. Doc: docs/cold-boot-resilience.md. ArgoCD has no PVC.
+- RECOVERY: deleted live consul webhook -> pods unjammed -> MetalLB Running ->
+  ingress-nginx got MetalLB IP 192.168.1.51 ✅. LB JT9 relaunched (job 36) to
+  point HAProxy -> .51. Longhorn still settling (pre-upgrade hook fix).
