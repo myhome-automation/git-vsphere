@@ -83,10 +83,33 @@ metadata:
   name: openvas
   namespace: security
 spec:
-  type: NodePort
+  type: ClusterIP          # NO NodePort — exposed via Traefik Ingress below
   selector: { app: openvas }
   ports:
     - name: web
       port: 9392
       targetPort: 9392
-      nodePort: 30443
+---
+# Exposed via k3s Traefik Ingress (NO NodePort). Fronted by the nginx reverse
+# proxy on 192.168.1.203 which proxies openvas.biplextech.com to Traefik on
+# 192.168.1.181. Chain: client -> .203 nginx -> .181 Traefik -> OpenVAS:9392.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: openvas
+  namespace: security
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: openvas.biplextech.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: openvas
+                port:
+                  number: 9392

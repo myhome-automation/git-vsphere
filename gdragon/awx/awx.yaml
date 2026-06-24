@@ -9,11 +9,14 @@ metadata:
   name: awx
   namespace: awx
 spec:
-  # NodePort gives immediate access via 192.168.1.181:<port> without
-  # depending on the homelab.com DNS zone (still pending — arch.md §9).
-  # Switch to ingress_type: ingress + hostname awx.homelab.com once DNS is live.
-  service_type: nodeport
-  nodeport_port: 30080
+  # Exposed via k3s Traefik Ingress — NO NodePort. AWX/OpenVAS live on this
+  # gdragon k3s (separate from the ESXi platform), so they are fronted by the
+  # nginx reverse proxy on 192.168.1.203, which proxies awx.biplextech.com to
+  # Traefik on 192.168.1.181. Chain: client -> .203 nginx -> .181 Traefik -> AWX.
+  service_type: ClusterIP
+  ingress_type: ingress
+  ingress_class_name: traefik
+  hostname: awx.biplextech.com
 
   # admin password lands in secret awx-admin-password (auto-generated).
   admin_user: admin
