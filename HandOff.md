@@ -23,6 +23,16 @@
   disable` on all VMs (now in `base.yml`, TODO confirm committed) + makestep at
   boot. (3) Vault sealed-pod crashloop (tight liveness probe) → tolerant probes
   in `gitops/values/vault.yaml`. Force-deleted ~72 stale `Unknown` pods.
+- **★★ ROOT CAUSE of the master flapping = RAM-STARVED CONTROL PLANE.** Masters
+  have only **~3.6 GB RAM each**; the CIS-hardened control plane (etcd + apiserver
+  + controller-mgr + scheduler + calico + kube-proxy) is too tight, so under
+  GitOps reconciliation load etcd/apiserver get evicted/OOM and kubelets stop
+  posting status → masters flap `NotReady` → cluster-wide transient `Forbidden`.
+  Saw kmaster3 with BOTH etcd and apiserver containers down. **FIX = BOOST master
+  RAM/CPU** (power off VM → raise memory in ESXi → power on, one master at a time
+  to keep quorum). The decommissioned `.202` VM's resources are now free for this
+  (the user flagged this exact "boost later if needed"). Until then the cluster is
+  functional but fragile under load; avoid piling on work (big syncs, restarts).
 - **⚠ STILL UNSTABLE AT SESSION PAUSE (2026-06-24 ~18:00):** after heavy churn
   (ArgoCD controller/repo-server/redis restarts, kube-proxy/calico restarts on
   kworker2/3), **kmaster1 + kmaster3 went NotReady and masters became
