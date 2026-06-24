@@ -1,0 +1,64 @@
+---
+# tls_distribute_ca.yml — trust the biplextech.com internal CA on every host.
+#
+# cert-manager issues all *.biplextech.com certs from the `biplextech-ca`
+# ClusterIssuer (secret biplextech-ca-key-pair in the cert-manager namespace).
+# Because it's a private CA, clients show TLS warnings until they trust it. This
+# playbook installs the CA *certificate* (never the key) into each host's system
+# trust store so curl/openssl/etc. on every node + the edge box trust HTTPS to
+# the platform. Browsers still need the CA imported separately (export it with:
+#   kubectl -n cert-manager get secret biplextech-ca-key-pair \
+#     -o jsonpath='{.data.tls\.crt}' | base64 -d > biplextech-ca.crt ).
+#
+#   ANSIBLE_CONFIG=$PWD/ansible.cfg ansible-playbook playbooks/tls_distribute_ca.yml
+- name: tls | read the biplextech CA cert from the cluster
+  hosts: kmaster1
+  become: true
+  gather_facts: false
+  tasks:
+    - name: extract CA certificate (tls.crt only — NOT the key) from the secret
+      shell: >
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf -n cert-manager
+        get secret biplextech-ca-key-pair -o jsonpath='{.data.tls\.crt}' | base64 -d
+      register: ca_out
+      changed_when: false
+    - name: fail if the CA looks wrong
+      assert:
+        that: "'BEGIN CERTIFICATE' in ca_out.stdout"
+        fail_msg: "Did not get a PEM CA cert from biplextech-ca-key-pair"
+    - name: stash CA PEM for the next play
+      set_fact:
+        biplextech_ca_pem: "{{ ca_out.stdout }}"
+
+- name: tls | install the CA into every host trust store
+  hosts: everyone:edge_proxy
+  become: true
+  gather_facts: true
+  vars:
+    ca_pem: "{{ hostvars[groups['k8s_masters'][0]].biplextech_ca_pem }}"
+  tasks:
+    - name: RedHat/Rocky — anchor + extract
+      when: ansible_os_family == "RedHat"
+      block:
+        - name: write CA anchor
+          copy:
+            dest: /etc/pki/ca-trust/source/anchors/biplextech-ca.crt
+            content: "{{ ca_pem }}\n"
+            mode: "0644"
+          register: rh_ca
+        - name: update-ca-trust
+          command: update-ca-trust extract
+          when: rh_ca.changed
+
+    - name: Debian/Ubuntu — cert + update
+      when: ansible_os_family == "Debian"
+      block:
+        - name: write CA cert (must end in .crt)
+          copy:
+            dest: /usr/local/share/ca-certificates/biplextech-ca.crt
+            content: "{{ ca_pem }}\n"
+            mode: "0644"
+          register: deb_ca
+        - name: update-ca-certificates
+          command: update-ca-certificates
+          when: deb_ca.changed

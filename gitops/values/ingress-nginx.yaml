@@ -13,11 +13,19 @@ controller:
   ingressClassResource:
     name: nginx
     default: true
+  # Serve the wildcard biplextech.com cert on EVERY ingress by default, so all
+  # apps get HTTPS with one cert without per-Ingress TLS blocks. The secret is
+  # the cert-manager-issued *.biplextech.com wildcard (biplextech-tls).
+  extraArgs:
+    default-ssl-certificate: ingress-nginx/biplextech-tls
   config:
     use-forwarded-headers: "true"
     proxy-body-size: "50m"
     # Trust the external gateway's X-Forwarded-* headers.
     proxy-real-ip-cidr: "192.168.1.0/24"
+    # Force HTTP -> HTTPS across all apps.
+    ssl-redirect: "true"
+    force-ssl-redirect: "true"
   resources:
     requests: { cpu: 100m, memory: 128Mi }
     limits:   { memory: 256Mi }
