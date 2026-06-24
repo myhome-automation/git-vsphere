@@ -71,3 +71,15 @@ Workflow run ids (update as launched): see below.
 - Workflow run **6** relaunched 2026-06-23 after fixing JT15 become_enabled=false (EE has no sudo for localhost plays).
 - Workflow run **11** relaunched after LB vars fix (inventory vars + vault.yml vars_files).
 - Workflow run **22** relaunched after audit PSA fix + workflow rewire (argocd no longer gated by audit).
+
+## ✅ Build complete — workflow run 22 SUCCESSFUL (2026-06-23 20:14)
+All stages green: power-on(JT15) → LoadBalancer(JT9) → Longhorn prereqs(JT10)
+→ K8s hardening CIS(JT11) → K8s audit kube-bench(JT12) → ArgoCD bootstrap(JT13).
+ArgoCD installed + root app-of-apps applied → waves 0–9 reconciling async.
+
+## NEW DIRECTIVE (2026-06-23): NO NodePort — all URLs via the load balancer
+- gdragon AWX/OpenVAS: switch NodePort → k3s Traefik Ingress (klipper hostPort).
+- ESXi platform: ingress-nginx currently NodePort 32080/32443 → change to
+  no-NodePort path (hostNetwork ingress vs MetalLB — pending user clarification).
+- Reverses arch.md locked "No MetalLB / LB→NodePort" decision. Update gitops
+  values/ingress-nginx.yaml + edge_gateway.yml + per-app Ingress hosts.
