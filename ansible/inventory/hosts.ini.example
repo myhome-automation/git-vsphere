@@ -28,6 +28,12 @@ vault-server ansible_host=192.168.1.x
 [edge_proxy]
 gdragon-edge ansible_host=192.168.1.203 ansible_user=bstha ansible_ssh_private_key_file=/home/bstha/.ssh/id_ed25519
 
+# Authoritative DNS for biplextech.com (dns_biplextech.yml). Runs on the
+# always-on edge box — boots first/independent of ESXi, unlike the old .202 VM.
+# Connection vars inherited from the gdragon-edge definition above.
+[dns]
+gdragon-edge
+
 [cluster:children]
 k8s_masters
 k8s_workers
