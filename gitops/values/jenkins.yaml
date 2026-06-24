@@ -18,8 +18,11 @@ controller:
     - workflow-aggregator
     - git
     - configuration-as-code
-  adminUser: admin
-  adminPassword: changeme-biplextech # bootstrap only — rotate via Vault/VSO
+  # chart renamed controller.adminUser -> controller.admin.username (helm render
+  # failed otherwise -> ArgoCD could not sync jenkins). 2026-06-24.
+  admin:
+    username: admin
+    password: changeme-biplextech # bootstrap only — rotate via Vault/VSO
 persistence:
   enabled: true
   storageClass: longhorn
