@@ -18,6 +18,10 @@ server:
 connectInject:
   enabled: true
   default: false
+  # CRITICAL: never let a not-ready injector wedge the whole cluster. With the
+  # default failurePolicy=Fail, if the injector pod is down (e.g. waiting on
+  # storage) EVERY pod create cluster-wide is rejected. Ignore = fail-open.
+  failurePolicy: Ignore
 ui:
   enabled: true
   service:

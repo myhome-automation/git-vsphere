@@ -27,6 +27,13 @@ spec:
     server: https://kubernetes.default.svc
     namespace: metallb-system
   syncPolicy:
+    # MetalLB speaker uses hostNetwork + NET_RAW — exempt from the cluster-wide
+    # PodSecurity 'restricted' default set by k8s_harden.
+    managedNamespaceMetadata:
+      labels:
+        pod-security.kubernetes.io/enforce: privileged
+        pod-security.kubernetes.io/warn: privileged
+        pod-security.kubernetes.io/audit: privileged
     automated:
       prune: true
       selfHeal: true

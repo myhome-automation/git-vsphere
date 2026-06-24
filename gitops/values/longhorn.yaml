@@ -8,6 +8,11 @@ defaultSettings:
   defaultReplicaCount: 2
   defaultDataPath: /var/lib/longhorn
   storageMinimalAvailablePercentage: 15
+# Disable the pre-upgrade hook job: on a fresh ArgoCD install it runs before the
+# chart's ServiceAccount exists and fails ("longhorn-service-account not found"),
+# blocking the whole Longhorn sync. Not needed for a first install.
+preUpgradeChecker:
+  jobEnabled: false
 service:
   ui:
     type: ClusterIP
