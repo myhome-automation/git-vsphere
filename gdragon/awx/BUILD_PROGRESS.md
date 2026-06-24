@@ -46,15 +46,18 @@ Workflow chain: JT9 → JT10 → JT11 → JT12 → JT13 (on success).
   helm there (AWX EE has no helm/kubectl). Applies app-of-apps.
 
 ## TODO / next steps
-- [ ] **STEP 0 (power-on) is MISSING from the workflow.** VMs are off; the
-      ansible playbooks need them up. Power playbooks (`cluster_powerup.yml`,
-      `all_powerup.yml`) run on localhost and `ssh root@192.168.1.174` (vim-cmd)
-      using a key root@ESXi trusts. AWX EE needs that ESXi SSH key as a
-      credential, OR power on from gdragon directly first. Need .202 up too
-      (it's the DNS server). → add an ESXi power-on JT as node 0 of workflow.
-- [ ] Verify AWX EE pod → LAN egress works once a VM is up (test pod→.174).
+- [x] AWX EE pod → LAN egress works (pod→.174:443 OK). Earlier UNREACHABLE was
+      only because VMs were off — NOT a firewall issue. firewalld already trusts
+      pod/svc CIDR.
+- [x] root@ESXi SSH key = **/apps/git-code/keys/ansible-key** (already AWX cred 3)
+      — so power-on JT reuses cred 3; no separate ESXi credential needed.
+- [x] ESXi **maintenance mode exited** (was true — the silent killer).
+- [x] **Power-on JT added** = JT id **15** (`all_powerup.yml`), prepended as
+      workflow node 6 → LB(node1). Workflow now: 15→9→10→11→12→13.
 - [ ] Launch workflow 14; stream + verify each stage.
 - [ ] Wave 0–9 ArgoCD reconcile (Longhorn first; needs longhorn_prereqs done).
+
+Workflow run ids (update as launched): see below.
 
 ## How to resume
 1. `sudo /usr/local/bin/k3s kubectl -n awx get pods` (AWX up?).
@@ -63,3 +66,5 @@ Workflow chain: JT9 → JT10 → JT11 → JT12 → JT13 (on success).
    `/tmp/.../scratchpad/awx_setup.sh` (idempotent get-or-create) — or rebuild
    from the ids table above.
 4. Continue from the first unchecked TODO.
+
+- Workflow run **3** launched 2026-06-23 (node order 15→9→10→11→12→13).
