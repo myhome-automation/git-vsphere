@@ -40,16 +40,21 @@
   fixed via AWX CR `extra_settings: CSRF_TRUSTED_ORIGINS=['https://awx.biplextech.com']`
   + awx-web restart; verified web login → 302 + sessionid. See lessons.
 - **TLS CA** trusted on all hosts; browser CA at `~/biplextech-ca.crt`.
-- **DNS: `.202` dnsmasq is BACK UP (2026-06-24)** — powered on the `vault-server`
-  VM (ESXi vmid 66), stepped its clock, restarted dnsmasq. Authoritative for
-  `biplextech.com`: apex→.50, node A records, **and added `awx`/`openvas` →
-  .203** (the edge nginx). gdragon resolver now points at .202 (primary) + .254
-  (fallback). `dig @192.168.1.202 awx.biplextech.com` → .203. gdragon `/etc/hosts`
-  awx/openvas→.203 entries KEPT as a resilient local fallback (files > dns in
-  nsswitch) for when the often-rebooted .202 VM is down. Boot-race hardened:
-  switched conf to **bind-dynamic** (+ disabled `bind-interfaces` in default
-  `/etc/dnsmasq.conf`) so dnsmasq survives starting before the NIC has .202.
-  All durable in `ansible/playbooks/dns_biplextech.yml`.
+- **DNS MOVED to the always-on edge box `.203` (2026-06-24); `.202` retired.**
+  Rationale: `.202` was a VM on the often-rebooted, clock-skewing ESXi cluster —
+  fragile for LAN name resolution. `.203` (Ubuntu edge nginx) boots first and
+  independently of ESXi, and already fronts AWX/OpenVAS. **In-cluster CoreDNS
+  stays cluster-internal ONLY** (making the cluster the LAN resolver = circular
+  cold-boot dependency). Live: dnsmasq on `.203` authoritative for
+  `biplextech.com` (apex→.50, node A records, `awx`/`openvas`→.203, `dns`→.203),
+  enabled+active; coexists with systemd-resolved (binds 127.0.0.1 + .203 only,
+  NOT 127.0.0.53) via **bind-dynamic**. `.202` dnsmasq stopped+disabled (VM now
+  has no role — can be powered off). gdragon resolver → **.203** primary + .254
+  fallback. gdragon `/etc/hosts` awx/openvas→.203 entries KEPT as a harmless
+  local fallback. Durable in IaC: `dns_biplextech.yml` (OS-portable: apt/ufw +
+  conf-dir enable for Ubuntu, dnf/firewalld for Rocky), `[dns]`→`gdragon-edge`
+  in `inventory/hosts.ini`, `dns_server: 192.168.1.203` in `group_vars`,
+  startup-script DNS note. Verify: `dig @192.168.1.203 awx.biplextech.com`→.203.
 
 ## Resume here — next steps (in order)
 0. **After boot: FIRST `chronyc makestep` on all nodes** (or run
@@ -165,13 +170,22 @@
 - **kubectl secret with a dotted key:** `jsonpath='{.data.tls\.crt}'` escaping
   breaks through SSH — use `-o go-template='{{index .data "tls.crt"}}'`.
 - **`/etc/hosts` is `IP hostname`** (IP first). User had it reversed → no resolve.
-- **.202 dnsmasq dies on cold boot with `failed to create listening socket for
-  192.168.1.202: Cannot assign requested address`** — it starts before the NIC
-  has the address. Fix = `bind-dynamic` (not `bind-interfaces`), which also
-  requires commenting `bind-interfaces` out of the default `/etc/dnsmasq.conf`
-  (else `cannot set --bind-interfaces and --bind-dynamic`). Both now in
-  `dns_biplextech.yml`. Until a reboot proves it, a manual
-  `ssh ansible@.202 sudo systemctl restart dnsmasq` clears it.
+- **DNS now lives on the always-on `.203` edge box, not the ESXi `.202` VM** (see
+  Current state). dnsmasq cold-boot gotchas seen along the way:
+  - **`failed to create listening socket ...: Cannot assign requested address`** —
+    dnsmasq started before the NIC had its IP. Fix = `bind-dynamic` (not
+    `bind-interfaces`); on Rocky also comment `bind-interfaces` out of the default
+    `/etc/dnsmasq.conf` (else `cannot set --bind-interfaces and --bind-dynamic`).
+  - **Ubuntu ships only `dnsmasq-base`** (no service/conf-dir). Need the full
+    `dnsmasq` pkg, AND `/etc/dnsmasq.conf` has every `conf-dir=` line commented →
+    `/etc/dnsmasq.d/*.conf` is ignored until you uncomment
+    `conf-dir=/etc/dnsmasq.d/,*.conf`.
+  - **systemd-resolved coexistence:** resolved owns `127.0.0.53:53` (loopback
+    only), so dnsmasq must `listen-address=127.0.0.1,<LANIP>` (never .53) — the
+    LAN IP:53 is free. Leave resolved running (the box uses it for its own
+    lookups). Don't try to bind `0.0.0.0:53`.
+  All handled in `dns_biplextech.yml`. Manual restart if needed:
+  `ssh bstha@192.168.1.203 sudo systemctl restart dnsmasq`.
 - **The `biplextech.com` zone has NO wildcard** (`local=/biplextech.com/` →
   unlisted names NXDOMAIN, not forwarded). Every app hostname needs an explicit
   record in `dns_biplextech.yml` (awx/openvas → .203 added; platform apps → .50

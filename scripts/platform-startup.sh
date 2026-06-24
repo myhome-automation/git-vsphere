@@ -5,7 +5,9 @@
 #
 # Dependency order (nothing here depends on something started later):
 #   1. ESXi host          (must be out of maintenance mode)
-#   2. DNS                 vault-server .202
+#   0. DNS (.203)          authoritative biplextech.com runs on the ALWAYS-ON
+#                          Ubuntu edge box — NOT on ESXi — so it's already up
+#                          before this script runs (moved off .202 2026-06-24).
 #   3. Load balancers      lb1 .188 (VIP MASTER) -> lb2 .185 (BACKUP)
 #   4. Control plane       kmaster1/2/3
 #   5. Workers             kworker1/2/3
@@ -30,9 +32,12 @@ echo "== 1/8  ESXi host: clear maintenance mode (silent power-on killer) =="
 ssh -o StrictHostKeyChecking=no root@"$ESXI" \
   'vim-cmd hostsvc/maintenance_mode_exit 2>/dev/null; vim-cmd hostsvc/runtimeinfo | grep -i maintenance'
 
-echo "== 2-5/8  Power on the 9 VMs in order (vault-server/DNS -> lb -> masters -> workers) =="
+echo "== 2-5/8  Power on the 9 VMs in order (vault-server -> lb -> masters -> workers) =="
 # all_powerup.yml: vault-server first, then cluster_powerup (lb1,lb2,masters,workers),
 # waits for SSH on each, chronyc makestep, probes k8s API + DNS via the VIP.
+# NOTE: DNS no longer depends on vault-server (.202) — it's on the always-on .203
+# edge box now (2026-06-24). vault-server has no active role; powering it on is
+# harmless and can be dropped from all_powerup.yml later.
 cd "$ANS"
 ANSIBLE_CONFIG="$PWD/ansible.cfg" ansible-playbook playbooks/all_powerup.yml || {
   echo "powerup playbook failed — check ESXi + VM state"; exit 1; }

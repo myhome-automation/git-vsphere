@@ -5,8 +5,11 @@
 timezone: "America/Chicago"
 domain:   "biplextech.com"
 
-# Authoritative DNS for biplextech.com runs on the repurposed vault-server VM.
-dns_server: "192.168.1.202"
+# Authoritative DNS for biplextech.com. MOVED 2026-06-24 to the always-on Ubuntu
+# edge box (.203) off the .202 cluster VM (ESXi reboots often / clock skew); the
+# edge boots first and independently. Clients point here (the `everyone` resolver
+# play in dns_biplextech.yml).
+dns_server: "192.168.1.203"
 
 # ingress-nginx is exposed via MetalLB (LoadBalancer), pinned to this IP.
 # HAProxy on lb1/lb2 (VIP below) forwards :80/:443 here — NO NodePort.

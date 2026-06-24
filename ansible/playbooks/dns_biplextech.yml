@@ -1,15 +1,22 @@
 ---
 # dns_biplextech.yml
 #
-# Repurpose the ex-vault-server VM (192.168.1.202) as the authoritative DNS
-# server for biplextech.com via dnsmasq. Platform access is path-based on a
-# single host, so the only record the platform needs is:
-#     biplextech.com -> 192.168.1.50  (keepalived VIP / edge gateway)
-# Node A records are added for ops convenience. Everything else is forwarded
-# upstream. All hosts are then pointed at .202 for DNS.
+# Authoritative DNS for biplextech.com via dnsmasq, on the ALWAYS-ON Ubuntu edge
+# box (.203, inventory group [dns] -> gdragon-edge). Moved here 2026-06-24 OFF the
+# ex-vault-server .202 VM: .202 lived on the often-rebooted, clock-skewing ESXi
+# cluster, so tying LAN name resolution to it was fragile. The .203 edge box boots
+# first and independently of ESXi, and already fronts AWX/OpenVAS. In-cluster
+# CoreDNS stays scoped to cluster-internal names only (making the cluster the LAN
+# resolver would be a circular cold-boot dependency).
+#   biplextech.com -> 192.168.1.50  (keepalived VIP / edge gateway, path-based)
+# Node A records added for ops convenience; everything else forwarded upstream.
+# All cluster hosts are then pointed at .203 for DNS.
 #
 #   ANSIBLE_CONFIG=$PWD/ansible.cfg ansible-playbook playbooks/dns_biplextech.yml
-- name: dns | authoritative biplextech.com on the repurposed vault-server (.202)
+#
+# OS-portable: edge is Ubuntu (apt + ufw + conf-dir disabled by default); the old
+# .202 was Rocky (dnf + firewalld). Tasks branch on ansible_os_family.
+- name: dns | authoritative biplextech.com on the always-on edge box (.203)
   hosts: dns
   become: true
   vars:
@@ -24,17 +31,27 @@
       - { name: kworker3, ip: 192.168.1.184 }
       - { name: lb1, ip: 192.168.1.188 }
       - { name: lb2, ip: 192.168.1.185 }
-      - { name: dns, ip: 192.168.1.202 }
+      - { name: dns, ip: 192.168.1.203 } # DNS now lives on the edge box
       # gdragon mgmt/security apps are front-ended by the .203 edge nginx
       # (.203 -> .181 Traefik -> AWX/OpenVAS). local=/biplextech.com/ means
       # unlisted names NXDOMAIN (not forwarded), so these MUST be explicit.
       - { name: awx.biplextech.com, ip: 192.168.1.203 }
       - { name: openvas.biplextech.com, ip: 192.168.1.203 }
   tasks:
-    - name: install dnsmasq
-      dnf:
+    - name: install dnsmasq (full pkg; Ubuntu ships only dnsmasq-base)
+      package:
         name: dnsmasq
         state: present
+
+    # Ubuntu's /etc/dnsmasq.conf ships every conf-dir line commented out, so
+    # /etc/dnsmasq.d/*.conf is NOT read until we enable it. (Rocky's is already
+    # active.) Harmless/idempotent on Rocky.
+    - name: enable conf-dir so /etc/dnsmasq.d/*.conf is read (Ubuntu default off)
+      lineinfile:
+        path: /etc/dnsmasq.conf
+        regexp: '^\s*#?\s*conf-dir=/etc/dnsmasq\.d/,\*\.conf\s*$'
+        line: 'conf-dir=/etc/dnsmasq.d/,*.conf'
+      notify: restart dnsmasq
 
     - name: ensure hosts dir exists (outside conf-dir)
       file:
@@ -78,10 +95,12 @@
           no-hosts
           addn-hosts=/etc/dnsmasq.hosts.d/biplextech.hosts
 
-          # Listen on loopback + this host's primary address.
+          # Listen on loopback + this host's primary address ONLY (never
+          # 127.0.0.53) so we coexist with systemd-resolved on the Ubuntu edge
+          # box — resolved owns 127.0.0.53:53 for the box's own lookups.
           listen-address=127.0.0.1,{{ ansible_default_ipv4.address }}
           # bind-dynamic (NOT bind-interfaces): on a cold boot dnsmasq can start
-          # before the .202 address is assigned -> bind-interfaces fails hard with
+          # before this host's IP is assigned -> bind-interfaces fails hard with
           # "Cannot assign requested address". bind-dynamic binds as addresses
           # appear, so dnsmasq survives the boot race. (Requires bind-interfaces
           # be disabled in the default /etc/dnsmasq.conf — handled below.)
@@ -98,7 +117,7 @@
           log-facility=/var/log/dnsmasq.log
       notify: restart dnsmasq
 
-    - name: open DNS ports (53 tcp+udp)
+    - name: open DNS ports 53 (firewalld — RedHat)
       firewalld:
         port: "{{ item }}"
         permanent: true
@@ -107,6 +126,18 @@
       loop:
         - 53/tcp
         - 53/udp
+      when: ansible_os_family == "RedHat"
+
+    - name: open DNS ports 53 (ufw — Debian/Ubuntu, only if ufw enabled)
+      community.general.ufw:
+        rule: allow
+        port: "53"
+        proto: "{{ item }}"
+      loop:
+        - tcp
+        - udp
+      when: ansible_os_family == "Debian"
+      failed_when: false
 
     - name: enable and start dnsmasq
       systemd:
