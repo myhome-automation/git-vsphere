@@ -25,5 +25,8 @@ controller:
     enabled: true
   admissionWebhooks:
     enabled: true
+    # Cold-boot safety: fail-open so Ingress applies don't get rejected while the
+    # controller is still starting after a power cycle (home server reboots often).
+    failurePolicy: Ignore
 defaultBackend:
   enabled: false
