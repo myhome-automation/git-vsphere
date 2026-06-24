@@ -83,3 +83,17 @@ ArgoCD installed + root app-of-apps applied → waves 0–9 reconciling async.
   no-NodePort path (hostNetwork ingress vs MetalLB — pending user clarification).
 - Reverses arch.md locked "No MetalLB / LB→NodePort" decision. Update gitops
   values/ingress-nginx.yaml + edge_gateway.yml + per-app Ingress hosts.
+
+## No-NodePort exposure (2026-06-23, evening)
+- DECISION: Cloudflare -> HAProxy(VIP .50) -> MetalLB IP .51 -> ingress-nginx -> app.
+  Reverses old "no MetalLB". gdragon AWX/OpenVAS handled SEPARATELY (not ESXi LB).
+- ESXi platform (committed 36837a4): MetalLB app (wave -2) + pool .51-.60 (wave -1)
+  + ingress-nginx Service -> LoadBalancer pinned .51; HAProxy -> .51 (ingress_lb_ip).
+  GOTCHA: AWX bootstrap re-run did NOT update the live AppProject; metallb app hit
+  "repo not permitted". FIX: applied gitops/bootstrap/project.yaml directly. Now
+  permitted; ArgoCD syncing metallb -> pool -> ingress LB IP.
+  TODO: once ingress-nginx EXTERNAL-IP=.51, re-run loadbalancer JT9 (HAProxy->.51).
+- gdragon tools (committed 9c57087): AWX+OpenVAS off NodePort -> ClusterIP+Traefik
+  Ingress on .181; system nginx on .203 reverse-proxies awx/openvas.biplextech.com
+  -> .181 Traefik. Verified 200 end-to-end through .203. NO NodePort on gdragon.
+  OpenVAS secret repatched to live pw after manifest apply reset it to placeholder.
