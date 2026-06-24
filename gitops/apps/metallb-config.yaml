@@ -1,0 +1,30 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: metallb-config
+  namespace: argocd
+  annotations:
+    # IPAddressPool + L2Advertisement. Wave -1: after the metallb chart
+    # (wave -2) installs the CRDs, before ingress-nginx (wave 1) needs an IP.
+    argocd.argoproj.io/sync-wave: "-1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: platform
+  source:
+    repoURL: https://github.com/myhome-automation/git-vsphere.git
+    targetRevision: main
+    path: gitops/manifests/metallb
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: metallb-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 10
+      backoff:
+        duration: 10s
+        maxDuration: 2m
+        factor: 2

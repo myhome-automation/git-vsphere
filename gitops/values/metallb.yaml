@@ -1,0 +1,15 @@
+# MetalLB (L2 mode) — bare-metal LoadBalancer for the homelab cluster.
+# The IPAddressPool + L2Advertisement are applied separately by the
+# `metallb-config` Application (raw manifests) once these CRDs exist.
+controller:
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits:   { memory: 128Mi }
+speaker:
+  # L2 mode uses memberlist; no BGP. Speaker runs as a DaemonSet and ARP-
+  # answers for the pool IPs from whichever node currently holds each VIP.
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits:   { memory: 128Mi }
+  frr:
+    enabled: false

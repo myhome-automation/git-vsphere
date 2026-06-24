@@ -1,15 +1,15 @@
-# Single cluster ingress controller. Exposed as NodePort so the external
-# lb1/lb2 nginx API gateway (behind keepalived VIP 192.168.1.50) can forward
-# all *.biplextech.com traffic here. TLS is terminated at the external nginx;
-# inside the cluster this listens HTTP and host-routes via Ingress objects.
+# Single cluster ingress controller. Exposed as a MetalLB LoadBalancer
+# (pinned 192.168.1.51) — NO NodePort. The external HAProxy/keepalived VIP
+# 192.168.1.50 forwards :80/:443 to this LB IP; Cloudflare fronts HAProxy.
+# Chain: Cloudflare -> HAProxy(VIP .50) -> MetalLB .51 -> ingress-nginx -> app.
 controller:
   kind: Deployment
   replicaCount: 2
   service:
-    type: NodePort
-    nodePorts:
-      http: 32080
-      https: 32443
+    type: LoadBalancer
+    annotations:
+      metallb.universe.tf/address-pool: homelab-pool
+    loadBalancerIP: 192.168.1.51
   ingressClassResource:
     name: nginx
     default: true

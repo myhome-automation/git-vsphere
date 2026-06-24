@@ -1,0 +1,23 @@
+---
+# MetalLB address pool for the homelab LAN (192.168.1.0/24).
+# Reserved range OUTSIDE the DHCP scope (.100-.200) and clear of the
+# keepalived VIP (.50) and all static host IPs (.174 ESXi, .181/.185-.189/
+# .202/.203, workers .182-.184). ingress-nginx pins .51 (see its values).
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: homelab-pool
+  namespace: metallb-system
+spec:
+  addresses:
+    - 192.168.1.51-192.168.1.60
+  autoAssign: true
+---
+apiVersion: metallb.io/v1beta1
+kind: L2Advertisement
+metadata:
+  name: homelab-l2
+  namespace: metallb-system
+spec:
+  ipAddressPools:
+    - homelab-pool

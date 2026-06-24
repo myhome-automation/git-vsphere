@@ -8,9 +8,10 @@ domain:   "biplextech.com"
 # Authoritative DNS for biplextech.com runs on the repurposed vault-server VM.
 dns_server: "192.168.1.202"
 
-# In-cluster ingress-nginx NodePorts (the edge nginx gateway proxies here).
-ingress_http_nodeport:  32080
-ingress_https_nodeport: 32443
+# ingress-nginx is exposed via MetalLB (LoadBalancer), pinned to this IP.
+# HAProxy on lb1/lb2 (VIP below) forwards :80/:443 here — NO NodePort.
+# Chain: Cloudflare -> HAProxy(VIP) -> MetalLB ingress_lb_ip -> ingress-nginx -> app.
+ingress_lb_ip: "192.168.1.51"
 
 dhcp_range_start: "192.168.1.100"
 dhcp_range_end:   "192.168.1.200"

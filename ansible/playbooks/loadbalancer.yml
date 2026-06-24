@@ -55,26 +55,24 @@
             server kmaster3 {{ hostvars['kmaster3'].ansible_host }}:{{ k8s_api_port }} check
 
           # ── HTTP ingress ────────────────────────────────────────────────
+          # Forward to the MetalLB LoadBalancer IP of ingress-nginx
+          # ({{ ingress_lb_ip }}) — NOT worker NodePorts. Chain:
+          # Cloudflare -> here (VIP {{ vip }}) -> MetalLB {{ ingress_lb_ip }}
+          # -> ingress-nginx -> app. TCP passthrough; TLS terminates at ingress.
           frontend http_in
             bind *:{{ http_port }}
-            default_backend workers_http
+            default_backend ingress_http
 
-          backend workers_http
-            balance roundrobin
-            server kworker1 {{ hostvars['kworker1'].ansible_host }}:30080 check
-            server kworker2 {{ hostvars['kworker2'].ansible_host }}:30080 check
-            server kworker3 {{ hostvars['kworker3'].ansible_host }}:30080 check
+          backend ingress_http
+            server ingress_lb {{ ingress_lb_ip }}:80 check
 
           # ── HTTPS ingress ───────────────────────────────────────────────
           frontend https_in
             bind *:{{ https_port }}
-            default_backend workers_https
+            default_backend ingress_https
 
-          backend workers_https
-            balance roundrobin
-            server kworker1 {{ hostvars['kworker1'].ansible_host }}:30443 check
-            server kworker2 {{ hostvars['kworker2'].ansible_host }}:30443 check
-            server kworker3 {{ hostvars['kworker3'].ansible_host }}:30443 check
+          backend ingress_https
+            server ingress_lb {{ ingress_lb_ip }}:443 check
 
           # ── HAProxy stats ───────────────────────────────────────────────
           frontend stats
