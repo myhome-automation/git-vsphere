@@ -35,7 +35,10 @@
   (via .203 nginx → .181 Traefik), admin / `Nepal!@3`. **Both verified loginable
   2026-06-24 (next session):** AWX token POST → 201; OpenVAS admin pw re-set on the
   live gvmd (`gvmd --user=admin --new-password`) and verified via `gvm-cli ...
-  socket <get_version/>` → status 200. (Login blocker was DNS, not creds — see below.)
+  socket <get_version/>` → status 200. (Initial blocker was DNS, not creds.)
+  **AWX browser login then 403'd on CSRF** (Origin not trusted behind the proxy) —
+  fixed via AWX CR `extra_settings: CSRF_TRUSTED_ORIGINS=['https://awx.biplextech.com']`
+  + awx-web restart; verified web login → 302 + sessionid. See lessons.
 - **TLS CA** trusted on all hosts; browser CA at `~/biplextech-ca.crt`.
 - **DNS:** `.202` dnsmasq STILL DOWN (powered off) → `*.biplextech.com` doesn't
   resolve LAN-wide. **Interim fix applied on gdragon `/etc/hosts`:
@@ -126,6 +129,19 @@
 ### Edge / TLS / nginx
 - **nginx on Ubuntu 24.04 (1.24)** wants `listen 443 ssl http2;` — the new
   `http2 on;` directive is unknown (1.25.1+ only).
+- **AWX browser (session) login → 403 CSRF behind the reverse proxy** while the
+  API token (`POST /api/v2/tokens/`, basic auth) returns 201. awx-web log:
+  `Forbidden (Origin checking failed - https://awx.biplextech.com does not match
+  any trusted origins)`. Fix = trust the public origin. **Two gotchas:**
+  (1) Setting `CSRF_TRUSTED_ORIGINS` via the runtime settings API
+  (`PATCH /api/v2/settings/system/`) is NOT enough — Django's `CsrfViewMiddleware`
+  caches the allowed origins as a per-worker `cached_property` at startup, so the
+  live workers keep the old (empty) list until **restarted**. (2) Durable fix is
+  the **AWX CR `extra_settings`** (`gdragon/awx/awx.yaml`): renders
+  `CSRF_TRUSTED_ORIGINS = ['https://awx.biplextech.com']` into the Django settings
+  configmap at boot — survives pod restart AND fresh rebuild. Verify login:
+  GET `/api/login/` → take csrftoken cookie → POST with `Origin` + `X-CSRFToken`;
+  success = **302 + sessionid cookie**.
 - **Re-applying `gdragon/openvas/openvas.yaml` reset the admin Secret to the
   placeholder.** After any manifest apply, re-patch the live OpenVAS password.
   Also: the `openvas-admin` Secret (envFrom, keys **USERNAME/PASSWORD**) only sets

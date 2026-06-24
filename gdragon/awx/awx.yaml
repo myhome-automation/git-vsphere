@@ -21,6 +21,18 @@ spec:
   # admin password lands in secret awx-admin-password (auto-generated).
   admin_user: admin
 
+  # Browser (session) login does Django CSRF Origin checking. Behind the
+  # .203 nginx -> .181 Traefik proxy the API token auth works, but the web
+  # login POST is rejected ("Origin checking failed ... does not match any
+  # trusted origins") unless the public origin is trusted. Setting this via
+  # the runtime settings API is NOT enough — Django's CsrfViewMiddleware
+  # caches the allowed origins per worker at startup, so it must be a
+  # Django-level setting (extra_settings) applied at boot. Durable + GitOps.
+  extra_settings:
+    - setting: CSRF_TRUSTED_ORIGINS
+      value:
+        - https://awx.biplextech.com
+
   # Postgres PVC on the k3s default local-path StorageClass.
   postgres_storage_class: local-path
   postgres_storage_requirements:
