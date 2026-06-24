@@ -7,7 +7,13 @@
   hosts: loadbalancers
   become: true
 
-  # All vars come from group_vars/all/vars.yml + vault.yml
+  # Non-secret vars come from group_vars/all/vars.yml (auto-loaded locally via
+  # the inventory/group_vars symlink; supplied as inventory vars under AWX).
+  # The keepalived auth password lives encrypted in vault.yml — load it
+  # explicitly so the secret resolves both locally and under AWX (decrypted at
+  # runtime by the Vault credential) without ever importing it into inventory.
+  vars_files:
+    - "{{ playbook_dir }}/../group_vars/all/vault.yml"
 
   tasks:
     - name: install haproxy and keepalived
