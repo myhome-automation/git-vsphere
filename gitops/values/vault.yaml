@@ -40,13 +40,23 @@ server:
     requests: { cpu: 100m, memory: 256Mi }
     limits:   { memory: 512Mi }
   # Stay Running while sealed (lesson from the old k3s Vault: sealedcode=204).
+  # Probes are deliberately TOLERANT: on these small/loaded workers a SEALED
+  # standby pod responds slowly, and the chart-default liveness (timeout 3s,
+  # failureThreshold 2) SIGKILLs it mid-unseal -> crashloop that resets the
+  # unseal (cold-boot trap, 2026-06-24). Wide thresholds let sealed pods survive
+  # long enough to be unsealed; an unsealed pod responds fast so this is moot.
   readinessProbe:
     enabled: true
     path: "/v1/sys/health?standbyok=true&sealedcode=204&uninitcode=204"
+    timeoutSeconds: 10
+    failureThreshold: 12
   livenessProbe:
     enabled: true
     path: "/v1/sys/health?standbyok=true&sealedcode=204&uninitcode=204"
-    initialDelaySeconds: 60
+    initialDelaySeconds: 120
+    periodSeconds: 10
+    timeoutSeconds: 10
+    failureThreshold: 12
   # Path-based: https://biplextech.com/vault . Vault UI hard-codes /ui so the
   # sub-path is imperfect (API works cleanly); strip prefix at the ingress.
   ingress:
