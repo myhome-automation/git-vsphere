@@ -108,3 +108,17 @@ ArgoCD installed + root app-of-apps applied → waves 0–9 reconciling async.
 - RECOVERY: deleted live consul webhook -> pods unjammed -> MetalLB Running ->
   ingress-nginx got MetalLB IP 192.168.1.51 ✅. LB JT9 relaunched (job 36) to
   point HAProxy -> .51. Longhorn still settling (pre-upgrade hook fix).
+
+## 2026-06-23 — HTTPS across apps with custom biplextech.com cert
+- cert-manager PKI verified: selfsigned root -> biplextech-ca ClusterIssuer ->
+  wildcard *.biplextech.com (secret biplextech-tls, Ready).
+- ingress-nginx: default-ssl-certificate=ingress-nginx/biplextech-tls + force
+  HTTPS. VERIFIED: VIP .50:443 serves CN=biplextech.com (issuer "biplextech.com
+  internal CA"), CA-verified, 404 (no app ingress yet = chain OK).
+- AWX/OpenVAS: .203 nginx terminates HTTPS with the wildcard cert (200, 80->443
+  redirect). cert+key deployed out-of-band to /etc/nginx/ssl (NOT in git).
+- CA trust distributed (tls_distribute_ca.yml) to all 9 VMs + gdragon + .203.
+  CA cert exported for browser: /home/bstha/biplextech-ca.crt.
+- Edge chain confirmed up: VIP .50 -> HAProxy -> MetalLB .51 -> ingress-nginx.
+- STILL PENDING (not TLS): Longhorn StorageClass (stateful apps Pending);
+  per-app Ingress hosts + *.biplextech.com DNS (.202 dnsmasq was down).
