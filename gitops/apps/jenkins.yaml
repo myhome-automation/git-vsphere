@@ -23,6 +23,17 @@ spec:
     server: https://kubernetes.default.svc
     namespace: jenkins
   syncPolicy:
+    # CIS hardening enforces PodSecurity `restricted` cluster-wide, but the
+    # Jenkins chart's init/config-reload containers don't set drop:[ALL]/seccomp
+    # so jenkins-0 was rejected. Jenkins needs no privileged/host access, so
+    # `baseline` is the right posture: blocks privileged/hostNetwork/hostPath/etc
+    # while permitting normal CI pods. (Harden to `restricted` later by setting
+    # per-container securityContext in the chart values.)
+    managedNamespaceMetadata:
+      labels:
+        pod-security.kubernetes.io/enforce: baseline
+        pod-security.kubernetes.io/warn: baseline
+        pod-security.kubernetes.io/audit: baseline
     automated:
       prune: true
       selfHeal: true
