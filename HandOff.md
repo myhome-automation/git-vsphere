@@ -51,14 +51,33 @@
 - **GitOps app status (2026-06-24 end, cluster STABLE):** Synced/Healthy =
   cert-manager(+issuers), **gatekeeper(OPA)**, ingress-nginx, longhorn,
   metallb(+config), **vault**, **jenkins** (2/2), **vault-secrets-operator** (2/2).
-  consul = Healthy (OutOfSync drift). kube-prometheus-stack = Synced but
-  **Degraded** (duplicate `kps-*` + `kube-prometheus-stack-*` helm releases —
-  prune the orphaned old release). platform-root OutOfSync (clears as children
-  settle). **Consul service mesh control plane UP:** 3 servers + connect-injector.
-- **URLs (path-based on `biplextech.com`, VIP .50 → ingress .51, wildcard TLS;
-  verified via `--resolve biplextech.com:443:192.168.1.50`):**
-  `/argocd`→200, `/consul`→301, `/vault`→307, `/longhorn`→200, `/jenkins`→403
-  (Jenkins UP but needs the `/jenkins` reverse-proxy prefix configured — minor).
+  consul = Healthy (OutOfSync drift). **kube-prometheus-stack FIXED 2026-06-24:**
+  there were TWO helm releases (`kps` + `kube-prometheus-stack`) → TWO prometheus
+  operators fighting over the CRs → churn. Deleted the old `kps` release entirely
+  (deploys/sts/ds/Prometheus CR/helm-secret) → single operator, Grafana+Prometheus
+  +Alertmanager all Running. Grafana also needed `initChownData.enabled:false`
+  (its root chown init violated `restricted` PSA). platform-root OutOfSync (clears
+  as children settle). **Consul service mesh control plane UP:** 3 servers +
+  connect-injector.
+- **URLs (path-based on `biplextech.com`, VIP .50 → ingress .51, wildcard TLS).
+  ALL verified responding (2026-06-24):** `/argocd`(200) `/grafana`(302) `/prometheus`(302)
+  `/alertmanager`(200) `/consul`(301) `/vault`(307) `/longhorn`(200) `/jenkins`(403=login).
+  **Login = `admin` / `Nepal!@3`** on ArgoCD, Grafana, Jenkins (verified 200).
+  Consul/Prometheus/Alertmanager/Longhorn = open UI. Vault = token (root token in
+  `~/.vault/biplextech-init.json`). **Loki + OpenSearch/search NOT deployed**
+  (a `promtail` DaemonSet exists with no Loki backend — orphan).
+- **★ "can't browse / 404 except jenkins" = client resolves `biplextech.com` to the
+  WRONG IP.** It MUST resolve to **.50** (platform VIP). The `.203` edge nginx only
+  knows awx/openvas vhosts → returns 404 for `/argocd` etc. Fix the browsing client:
+  point its DNS at **.203** (LAN dnsmasq returns `biplextech.com`→.50) OR add
+  `/etc/hosts: 192.168.1.50 biplextech.com`, AND trust the CA (`~/biplextech-ca.crt`).
+  On the `.203` box itself this needed a systemd-resolved drop-in routing
+  `~biplextech.com`→127.0.0.1 (its own dnsmasq), else resolved sent it upstream.
+- **Credentials are CONSISTENT (`admin`/`Nepal!@3`) and NOT in git:** ArgoCD
+  (live bcrypt patch of `argocd-secret`), Grafana + Jenkins via **`existingSecret`**
+  (out-of-band Secrets `grafana-admin-credentials` / `jenkins-admin-credentials`;
+  only the secret NAME is in git). Grafana existing-admin pw set via
+  `grafana cli admin reset-admin-password` (env doesn't reset an existing user).
 - **STILL TODO (next session):** (1) Vault HA — vault-1/2 sealed, fresh-PVC raft
   followers fail unseal `crypto/aes: invalid key size 0` → implement **auto-unseal
   (transit/KMS)** (also fixes manual-key security smell). (2) kube-prometheus
