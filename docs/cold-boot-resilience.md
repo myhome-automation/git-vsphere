@@ -64,20 +64,19 @@ block earlier waves because its webhooks are fail-open.
 
 ## The one operational dependency: Vault is SEALED after every boot
 
-This is **not a cycle** (app → VSO → Vault is linear and recoverable), but it is
-a manual step on every cold boot: Vault boots sealed, so VSO can't sync secrets
-and pods that mount those secrets stay `ContainerCreating` until Vault is
-unsealed. They recover automatically once it is — nothing deadlocks, it just
-waits.
+This is **not a cycle** (app → VSO → Vault is linear and recoverable).
 
-Options (pick one), in order of preference for an offline home lab:
-- **Auto-unseal** via a Vault Transit unseal from a tiny always-up Vault, or a
-  KMS — cleanest but heavier offline.
-- **Unseal Job/CronJob** that reads keys from a k8s Secret and unseals on boot —
-  convenient, but keys-at-rest in-cluster is a security trade-off.
-- **Manual unseal** (current): run the unseal after boot. Keep apps tolerant
-  (VSO retries; don't set hard init-container gates that crash-loop on a sealed
-  Vault).
+**RESOLVED 2026-06-25 — Vault TRANSIT auto-unseal (no manual step).** A tiny
+single-node "transit" Vault runs on the always-on gdragon k3s
+(`gdragon/vault-transit/`, `192.168.1.181:8200`); the ESXi-cluster Vault has a
+`seal "transit"` stanza and AUTO-unseals against it on every boot. The only
+seal that needs a manual unseal is the transit Vault itself — and
+`scripts/platform-startup.sh` (step 1, auto-run on gdragon boot via
+`platform-startup.service`) does that, after which the cluster Vault unseals
+itself. Apps are also kept tolerant (VSO retries; Vault probes lenient while
+sealed). Two gotchas that broke this earlier and are now fixed: the Vault raft
+cluster listener must bind **IPv4 `0.0.0.0`** (IPv6 is disabled cluster-wide),
+and the real **HashiCorp Vault image** ships the UI (OpenBao 2.0.x/2.1.x didn't).
 
 > Action item: decide Vault unseal strategy. Until then, unseal manually after
 > each boot; everything else converges on its own.
