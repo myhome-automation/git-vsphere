@@ -101,7 +101,20 @@
   Also Longhorn UI → **host-based `longhorn.biplextech.com`** (path `/longhorn`
   rendered blank — UI has no sub-path). vault-1/2 now schedule + run + reach the
   cluster.
-- **vault-1/2 HA auto-unseal — OpenBao 2.0.x bug (NOT Longhorn, NOT config).**
+- **★★ Vault 3-node HA AUTO-UNSEAL WORKING (2026-06-25).** REAL root cause (NOT a
+  version bug — earlier notes were wrong): the raft listener was `cluster_address
+  = "[::]:8201"` (IPv6 wildcard), but **IPv6 is disabled cluster-wide (CIS)** →
+  follower cluster listener failed `listen tcp [::]:8201: address family not
+  supported by protocol` → port 8201 never started → leader couldn't replicate →
+  followers never got the transit-unseal keys (`stored unseal keys none found`).
+  vault-0 worked only because a single node needs no 8201 replication. **FIX:
+  bind `0.0.0.0` (IPv4) in `gitops/values/vault.yaml`.** Result: all 3 unseal via
+  transit, all 3 raft **voters**, autopilot Healthy; verified a follower restart
+  → **auto-unseals + rejoins**. Image: `openbao/openbao:2.1.1`. New root/recovery
+  keys in `~/.vault/biplextech-init.json` (NEVER commit). Also raised Longhorn
+  `storageOverProvisioningPercentage:200` + cleaned 20 orphaned Longhorn volumes
+  (Retain reclaim left them after the rebuild churn, filling disks).
+- _(superseded)_ earlier OpenBao-version theory:
   Followers DO `retry_join` and join vault-0's raft membership (seen in peer list),
   but the join never delivers/stores the transit-unseal keys → autoseal loops
   `stored unseal keys ... none found`; leader then can't replicate because a SEALED
