@@ -1,0 +1,34 @@
+# Included once per VM (loop_var: poweron = {name, ip}) by cluster_powerup.yml.
+# STRICT SERIAL: power the VM on, then BLOCK until its SSH is up before the
+# caller moves to the next VM. Bounded waits — never loops forever.
+- name: "{{ poweron.name }} | resolve vmid"
+  shell: >
+    ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@{{ esxi_host }}
+    "vim-cmd vmsvc/getallvms | awk -v n='{{ poweron.name }}' '$2==n {print $1}'"
+  register: _vmid
+  changed_when: false
+
+- name: "{{ poweron.name }} | fail if vmid not found"
+  fail:
+    msg: "VM '{{ poweron.name }}' not found on ESXi {{ esxi_host }}."
+  when: _vmid.stdout | trim == ""
+
+- name: "{{ poweron.name }} | power on (skip if already on)"
+  shell: >
+    ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@{{ esxi_host }}
+    "state=$(vim-cmd vmsvc/power.getstate {{ _vmid.stdout | trim }} | tail -1);
+     if [ \"$state\" != 'Powered on' ]; then vim-cmd vmsvc/power.on {{ _vmid.stdout | trim }}; echo started; else echo already_on; fi"
+  register: _pon
+  changed_when: "'started' in _pon.stdout"
+
+- name: "{{ poweron.name }} | WAIT for SSH :22 (serial gate before next VM)"
+  wait_for:
+    host: "{{ poweron.ip }}"
+    port: 22
+    delay: 3
+    timeout: 360       # bounded: if a VM never boots, FAIL here (no hang/loop)
+    sleep: 5
+
+- name: "{{ poweron.name }} | up"
+  debug:
+    msg: "{{ poweron.name }} ({{ poweron.ip }}) powered on + SSH reachable."
