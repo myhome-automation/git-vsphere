@@ -18,11 +18,14 @@ controller:
     - workflow-aggregator
     - git
     - configuration-as-code
-  # chart renamed controller.adminUser -> controller.admin.username (helm render
-  # failed otherwise -> ArgoCD could not sync jenkins). 2026-06-24.
+  # Admin creds from an out-of-band Secret (NOT in git). Created live:
+  #   kubectl -n jenkins create secret generic jenkins-admin-credentials \
+  #     --from-literal=jenkins-admin-user=admin --from-literal=jenkins-admin-password=<pw>
+  # (rotate via Vault/VSO later). Keys: jenkins-admin-user / jenkins-admin-password.
   admin:
-    username: admin
-    password: changeme-biplextech # bootstrap only — rotate via Vault/VSO
+    existingSecret: jenkins-admin-credentials
+    userKey: jenkins-admin-user
+    passwordKey: jenkins-admin-password
 persistence:
   enabled: true
   storageClass: longhorn
