@@ -93,9 +93,22 @@
   (out-of-band Secrets `grafana-admin-credentials` / `jenkins-admin-credentials`;
   only the secret NAME is in git). Grafana existing-admin pw set via
   `grafana cli admin reset-admin-password` (env doesn't reset an existing user).
-- **STILL TODO (next session):** (1) **vault-1/2 HA** — recover the faulted
-  Longhorn volumes (delete+recreate once Longhorn settles, or reduce replica
-  count) so they auto-unseal via transit + rejoin. (2) GitHub App pipeline in
+- **Longhorn FIXED (2026-06-25):** vault-1/2 volumes were `faulted` /
+  `ReplicaSchedulingFailure: insufficient storage` — disks reserve 30% + the SUM
+  of REQUESTED replica sizes hit the 100% over-provision cap (~1.6 Gi schedulable)
+  though ~50 Gi was actually free. Fix: `storageOverProvisioningPercentage: 200`
+  (live + `gitops/values/longhorn.yaml`) → volumes schedule healthy (0 faulted).
+  Also Longhorn UI → **host-based `longhorn.biplextech.com`** (path `/longhorn`
+  rendered blank — UI has no sub-path). vault-1/2 now schedule + run + reach the
+  cluster.
+- **vault-1/2 auto-unseal STILL blocked — OpenBao raft self-bootstrap bug (NOT
+  Longhorn).** Fresh followers self-bootstrap their own empty raft on startup
+  instead of `retry_join`ing vault-0 → `raft is already initialized` on explicit
+  join, and autoseal loops `stored unseal keys ... none found` (autopilot shows
+  the follower at Last Index 0, never received the leader snapshot). vault-0 is
+  active + auto-unseals (operational). **Next-session options:** OpenBao version
+  bump, or bootstrap the 3-node raft together fresh, or `peers.json` recovery.
+- **STILL TODO (next session):** (2) GitHub App pipeline in
   Jenkins (net-new; app repo is separate). (3) VSO secret-sync
   (VaultConnection/VaultAuth/VaultStaticSecret CRs) — migrate the live admin
   Secrets into Vault and sync them out. (4) Consul service-mesh demo wiring.
