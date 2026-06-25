@@ -2,6 +2,14 @@
 
 This file provides orientation for anyone (human or AI agent) working with code in this repository.
 
+> **⚠ CURRENT STATE (2026-06): much of the detail below is HISTORICAL** (the
+> retired k3s-era stack, `myhomelab.com`, pre-GitOps layout). For the live
+> platform start here: [`README.md`](README.md) → [`arch.md`](arch.md) §0 →
+> [`HandOff.md`](HandOff.md) → [`docs/ACCESS.md`](docs/ACCESS.md) (apps/URLs/creds).
+> The ESXi cluster is now a GitOps platform (`gitops/`) with Vault HA + transit
+> auto-unseal; mgmt/security (AWX/OpenVAS/transit-Vault) is on gdragon k3s
+> (`gdragon/`); DNS is on the .203 edge box; the lab auto-recovers nightly (`scripts/`).
+
 ## Resume here — current state (last verified 2026-06-19)
 
 A new session should start by reading this section, then `docs/infra-implementation-notes.md`
