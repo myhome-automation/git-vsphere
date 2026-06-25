@@ -22,8 +22,14 @@ server:
       config: |
         ui = true
         listener "tcp" {
-          address = "[::]:8200"
-          cluster_address = "[::]:8201"
+          # IPv4 (0.0.0.0), NOT [::] — IPv6 is disabled cluster-wide (CIS), so an
+          # IPv6 wildcard cluster listener fails ("address family not supported by
+          # protocol") -> port 8201 never starts on followers -> leader can't
+          # replicate -> followers never get the auto-unseal keys ("stored unseal
+          # keys none found") -> only vault-0 ever unsealed. THIS was the real HA
+          # bug (mislabelled as an OpenBao version bug). 2026-06-25.
+          address = "0.0.0.0:8200"
+          cluster_address = "0.0.0.0:8201"
           tls_disable = 1
         }
         storage "raft" {
