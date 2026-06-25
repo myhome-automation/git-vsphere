@@ -29,6 +29,8 @@ ingress:
   ingressClassName: nginx
   host: longhorn.biplextech.com
   path: /
-  pathType: ImplementationSpecific
-  annotations:
-    nginx.ingress.kubernetes.io/rewrite-target: /$2
+  pathType: Prefix
+  # NO rewrite-target: host-based serves the UI at / and it uses RELATIVE asset
+  # paths (./styles.css etc.). A leftover `rewrite-target: /$2` mangled those ->
+  # assets 404 -> white screen. (rewrite was only for the old /longhorn path.)
+  annotations: {}
