@@ -27,6 +27,11 @@ prometheus:
 
 grafana:
   replicas: 1
+  # The chart's init-chown-data container runs as root w/ CHOWN -> rejected by
+  # CIS PodSecurity `restricted`. Disable it; Longhorn honours fsGroup so the
+  # data dir is owned correctly without a privileged init container. 2026-06-24.
+  initChownData:
+    enabled: false
   # Admin creds come from an out-of-band Secret (NOT in git). Created live:
   #   kubectl -n monitoring create secret generic grafana-admin-credentials \
   #     --from-literal=admin-user=admin --from-literal=admin-password=<pw>
