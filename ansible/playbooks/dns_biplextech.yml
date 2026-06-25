@@ -37,6 +37,13 @@
       # unlisted names NXDOMAIN (not forwarded), so these MUST be explicit.
       - { name: awx.biplextech.com, ip: 192.168.1.203 }
       - { name: openvas.biplextech.com, ip: 192.168.1.203 }
+      # Platform apps with HOST-based ingress (UIs that 404 under path routing)
+      # -> the edge VIP .50. (argocd/grafana/prometheus/jenkins stay path-based
+      # on the apex biplextech.com.)
+      - { name: vault.biplextech.com, ip: 192.168.1.50 }
+      - { name: consul.biplextech.com, ip: 192.168.1.50 }
+      - { name: grafana.biplextech.com, ip: 192.168.1.50 }
+      - { name: longhorn.biplextech.com, ip: 192.168.1.50 }
   tasks:
     - name: install dnsmasq (full pkg; Ubuntu ships only dnsmasq-base)
       package:
