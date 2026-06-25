@@ -10,12 +10,14 @@ server:
   # don't open cluster port 8201 -> leader can't replicate -> "stored unseal keys
   # ... none found"), so only vault-0 unsealed. Reproduced on 2.0.2 AND 2.0.3 even
   # on a fresh 3-node rebuild. 2.1.x fixes the follower auto-unseal path. 2026-06-25.
-  # 2.3.1: the 2.1.x image has NO web UI compiled in ("OpenBao UI is not available
-  # in this binary"); 2.3.x bundles the UI. (HA works on any version once the
-  # cluster listener binds IPv4 — see the listener config above.)
+  # Real HashiCorp Vault (NOT OpenBao), latest stable 1.x line. NB: HashiCorp
+  # Vault has no 2.x release (the "2.x" the chart shipped was a retagged OpenBao);
+  # 1.19.0 is the current stable. UI is built in. BUSL-licensed. HA works with the
+  # IPv4 cluster listener (above). active-service labels are vault-* so this also
+  # makes the chart's vault-active service valid (but we keep activeService:false).
   image:
-    repository: openbao/openbao
-    tag: "2.3.1"
+    repository: hashicorp/vault
+    tag: "1.19.0"
   ha:
     enabled: true
     replicas: 3
