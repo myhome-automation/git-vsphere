@@ -101,13 +101,22 @@
   Also Longhorn UI → **host-based `longhorn.biplextech.com`** (path `/longhorn`
   rendered blank — UI has no sub-path). vault-1/2 now schedule + run + reach the
   cluster.
-- **vault-1/2 auto-unseal STILL blocked — OpenBao raft self-bootstrap bug (NOT
-  Longhorn).** Fresh followers self-bootstrap their own empty raft on startup
-  instead of `retry_join`ing vault-0 → `raft is already initialized` on explicit
-  join, and autoseal loops `stored unseal keys ... none found` (autopilot shows
-  the follower at Last Index 0, never received the leader snapshot). vault-0 is
-  active + auto-unseals (operational). **Next-session options:** OpenBao version
-  bump, or bootstrap the 3-node raft together fresh, or `peers.json` recovery.
+- **vault-1/2 HA auto-unseal — OpenBao 2.0.x bug (NOT Longhorn, NOT config).**
+  Followers DO `retry_join` and join vault-0's raft membership (seen in peer list),
+  but the join never delivers/stores the transit-unseal keys → autoseal loops
+  `stored unseal keys ... none found`; leader then can't replicate because a SEALED
+  follower doesn't open cluster port 8201 (`connection refused` on appendEntries)
+  → follower stuck at raft Last Index 0. **Reproduced identically on OpenBao 2.0.2
+  AND 2.0.3, even on a FRESH 3-node rebuild** — so it's a 2.0.x line bug, not the
+  migration/config. Image now pinned `openbao/openbao:2.0.3` in
+  `gitops/values/vault.yaml` (was a retagged `hashicorp/vault:2.0.2`).
+  **vault-0 is fully operational on 2.0.3: active + transit auto-unseal verified
+  (restart → unsealed, no manual keys).** New root token after the fresh re-init is
+  in `~/.vault/biplextech-init.json` (recovery keys too; NEVER commit).
+  **To get 3-node HA, move to OpenBao 2.1.x** (confirmed pullable `openbao/openbao:2.1.1`;
+  the 2.1 line fixes the follower auto-unseal path) — was tested-ready but user
+  chose 2.0.3. Alternative: real `hashicorp/vault:1.18.x` (BUSL). Single-node
+  vault-0 is the current working state.
 - **STILL TODO (next session):** (2) GitHub App pipeline in
   Jenkins (net-new; app repo is separate). (3) VSO secret-sync
   (VaultConnection/VaultAuth/VaultStaticSecret CRs) — migrate the live admin
