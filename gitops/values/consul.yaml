@@ -6,6 +6,11 @@ global:
     enabled: false
   metrics:
     enabled: true
+  # Enable ACLs: the server-acl-init job bootstraps the ACL system and stores the
+  # bootstrap token in secret `consul-bootstrap-acl-token` (key `token`). Component
+  # tokens (servers, connect-inject, etc.) are issued automatically by the chart.
+  acls:
+    manageSystemACLs: true
 server:
   replicas: 3
   storageClass: longhorn
@@ -26,14 +31,14 @@ ui:
   enabled: true
   service:
     type: ClusterIP
-  # Path-based: https://biplextech.com/consul (UI sub-path via ingress rewrite).
+  # HOST-based (consul.biplextech.com): the Consul UI redirects to /ui, so
+  # path-based routing 404s. Host-based serves it cleanly at /. TLS via the
+  # ingress default *.biplextech.com wildcard. DNS record on .203 dnsmasq.
   ingress:
     enabled: true
     ingressClassName: nginx
-    pathType: ImplementationSpecific
-    annotations: |
-      nginx.ingress.kubernetes.io/rewrite-target: /$2
+    pathType: Prefix
     hosts:
-      - host: biplextech.com
+      - host: consul.biplextech.com
         paths:
-          - /consul(/|$)(.*)
+          - /

@@ -74,18 +74,18 @@ server:
     periodSeconds: 10
     timeoutSeconds: 10
     failureThreshold: 12
-  # Path-based: https://biplextech.com/vault . Vault UI hard-codes /ui so the
-  # sub-path is imperfect (API works cleanly); strip prefix at the ingress.
+  # HOST-based (vault.biplextech.com): the Vault UI hard-codes /ui, so path-based
+  # routing (/vault -> redirect /ui/) 404s. Host-based serves the UI cleanly at /.
+  # TLS via the ingress default *.biplextech.com wildcard cert. DNS record for
+  # vault.biplextech.com -> .50 added on the .203 dnsmasq (dns_biplextech.yml).
   ingress:
     enabled: true
     ingressClassName: nginx
-    pathType: ImplementationSpecific
-    annotations:
-      nginx.ingress.kubernetes.io/rewrite-target: /$2
+    pathType: Prefix
     hosts:
-      - host: biplextech.com
+      - host: vault.biplextech.com
         paths:
-          - /vault(/|$)(.*)
+          - /
 ui:
   enabled: true
   serviceType: ClusterIP
