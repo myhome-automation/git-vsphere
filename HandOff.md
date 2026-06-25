@@ -281,6 +281,13 @@
   `consul.biplextech.com`, `longhorn.biplextech.com`, `grafana`/`prometheus` too.
   A browsing CLIENT must resolve `*.biplextech.com -> .50` (point DNS at .203 OR
   add /etc/hosts) AND trust `~/biplextech-ca.crt`. Verified all 200 from .203.
+- **Vault UI blank / "OpenBao UI is not available in this binary":** the
+  OpenBao 2.0.x/2.1.x images don't compile in the web UI. **2.3.x bundles it** ->
+  pinned `openbao/openbao:2.3.1` in `gitops/values/vault.yaml`. (HA still fine.)
+- **Longhorn UI white screen on host-based ingress:** a leftover
+  `nginx.ingress.kubernetes.io/rewrite-target: /$2` (from the old /longhorn path)
+  mangled the UI's RELATIVE asset URLs -> 404 -> blank. Removed it (pathType
+  Prefix, no rewrite). Assets 200 now.
 - **ESXi maintenance mode = silent power-on killer.** Always
   `vim-cmd hostsvc/maintenance_mode_exit` before powering VMs.
 - **"No route to host" on the SAME subnet = ARP failure = the target VM is
