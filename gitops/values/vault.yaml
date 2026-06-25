@@ -26,6 +26,23 @@ server:
           retry_join { leader_api_addr = "http://vault-2.vault-internal:8200" }
         }
         service_registration "kubernetes" {}
+        # AUTO-UNSEAL via the transit engine on the always-on gdragon Vault
+        # (gdragon/vault-transit). No more manual unseal on every cold boot.
+        # The Vault token is injected via the VAULT_TOKEN env (extraSecretEnvironmentVars
+        # below, from secret vault-transit-token) — NOT committed to git.
+        seal "transit" {
+          address         = "http://192.168.1.181:8200"
+          key_name        = "autounseal"
+          mount_path      = "transit/"
+          disable_renewal = "false"
+          tls_skip_verify = "true"
+        }
+  # Token for the transit seal — value lives in the out-of-band secret
+  # vault-transit-token (created live, never in git).
+  extraSecretEnvironmentVars:
+    - envName: VAULT_TOKEN
+      secretName: vault-transit-token
+      secretKey: token
   dataStorage:
     enabled: true
     size: 5Gi

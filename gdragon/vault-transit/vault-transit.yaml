@@ -1,0 +1,97 @@
+---
+# vault-transit — a small single-node "unseal" Vault on the ALWAYS-ON gdragon k3s.
+# The often-rebooted ESXi-cluster Vault auto-unseals against this one's transit
+# engine, so it no longer re-seals on every reboot. This transit Vault rarely
+# reboots (gdragon is the always-on mgmt box) and is unsealed manually once
+# (keys stored on gdragon at ~/.vault/transit-init.json, chmod 600, NEVER commit).
+#
+# Exposed via k3s servicelb on 192.168.1.181:8200 so the cluster Vault nodes can
+# reach it. LAN-only, token-authenticated. (TLS can be layered later.)
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: vault-transit
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vault-transit-config
+  namespace: vault-transit
+data:
+  config.hcl: |
+    ui            = true
+    disable_mlock = true
+    storage "file" { path = "/vault/data" }
+    listener "tcp" {
+      address     = "0.0.0.0:8200"
+      tls_disable = true
+    }
+    api_addr     = "http://192.168.1.181:8200"
+    cluster_addr = "http://192.168.1.181:8201"
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: vault-transit-data
+  namespace: vault-transit
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: vault-transit
+  namespace: vault-transit
+spec:
+  serviceName: vault-transit
+  replicas: 1
+  selector:
+    matchLabels: { app: vault-transit }
+  template:
+    metadata:
+      labels: { app: vault-transit }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 100
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: vault
+          image: hashicorp/vault:1.18.5
+          # Call vault directly (skip docker-entrypoint.sh, which tries to chown
+          # the read-only configmap + setcap — both fail under dropped caps).
+          command: ["vault"]
+          args: ["server", "-config=/vault/config/config.hcl"]
+          ports:
+            - { name: api, containerPort: 8200 }
+            - { name: cluster, containerPort: 8201 }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits:   { memory: 256Mi }
+          volumeMounts:
+            - { name: config, mountPath: /vault/config }
+            - { name: data, mountPath: /vault/data }
+      volumes:
+        - name: config
+          configMap: { name: vault-transit-config }
+        - name: data
+          persistentVolumeClaim: { claimName: vault-transit-data }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vault-transit
+  namespace: vault-transit
+spec:
+  type: LoadBalancer        # k3s servicelb -> binds 192.168.1.181:8200
+  selector: { app: vault-transit }
+  ports:
+    - { name: api, port: 8200, targetPort: 8200 }
