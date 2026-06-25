@@ -1,65 +1,78 @@
 #!/usr/bin/env bash
-# platform-startup.sh — bring the whole home lab UP in dependency order after a
-# cold boot / power outage. Run from gdragon (192.168.1.181, the Ansible control
-# host + repo host). Idempotent; safe to re-run.
+# platform-startup.sh — bring the whole home lab UP in dependency order after the
+# NIGHTLY shutdown / a cold boot. Run from gdragon (192.168.1.181, the Ansible
+# control host + repo host). Idempotent; safe to re-run.
 #
-# Dependency order (nothing here depends on something started later):
-#   1. ESXi host          (must be out of maintenance mode)
-#   0. DNS (.203)          authoritative biplextech.com runs on the ALWAYS-ON
-#                          Ubuntu edge box — NOT on ESXi — so it's already up
-#                          before this script runs (moved off .202 2026-06-24).
-#   3. Load balancers      lb1 .188 (VIP MASTER) -> lb2 .185 (BACKUP)
-#   4. Control plane       kmaster1/2/3
-#   5. Workers             kworker1/2/3
-#   6. Platform (GitOps)   ArgoCD self-reconciles: MetalLB -> Longhorn(StorageClass)
-#                          -> cert-manager/ingress(.51) -> Vault -> Consul -> ...
-#   7. Vault unseal        (Vault always boots SEALED)
-#   8. Mgmt/security        gdragon k3s (AWX/OpenVAS) + edge nginx .203 (systemd)
+# ── Dependency order (nothing depends on something started later) ─────────────
+#   0. gdragon k3s + edge .203   already up (k3s/nginx/dnsmasq auto-start on boot)
+#   1. TRANSIT (auto-unseal) Vault on gdragon k3s  -> UNSEAL it (boots sealed).
+#        The ESXi-cluster Vault auto-unseals against this, so it MUST be unsealed
+#        BEFORE the cluster Vault pods start. Keys: ~/.vault/transit-init.json.
+#   2. ESXi host                 clear maintenance mode (silent power-on killer)
+#   3. Cluster VMs               lb1/lb2 -> kmaster1/2/3 -> kworker1/2/3
+#   4. Clocks                    chronyc makestep on every node (etcd needs it)
+#   5. kubelet sysctls           re-assert (protectKernelDefaults; not persisted)
+#   6. Platform (GitOps)         ArgoCD self-reconciles MetalLB -> Longhorn ->
+#                                cert-manager/ingress(.51) -> Vault(AUTO-unseals)
+#                                -> Consul -> Gatekeeper -> Prometheus -> Jenkins
+#   7. Verify Vault HA           all 3 AUTO-unsealed via transit (no manual keys)
+#   8. Mgmt/security             AWX/OpenVAS (gdragon k3s) + edge nginx (.203)
 #
-# See docs/cold-boot-resilience.md (no circular deps) and docs/architecture.md.
+# DNS for biplextech.com is authoritative on the always-on .203 edge box (NOT in
+# the ESXi cluster, NOT on the decommissioned .202 VM). See docs/architecture.md
+# and docs/cold-boot-resilience.md.
 set -uo pipefail
 
 REPO=/apps/git-code/git-vsphere
 ANS="$REPO/ansible"
 ESXI=192.168.1.174
 KEY=/apps/git-code/keys/ansible-key
+EDGE_KEY=$HOME/.ssh/id_ed25519
 MASTER=192.168.1.186
 K3S=/usr/local/bin/k3s
-VAULT_KEYS="$HOME/.vault/biplextech-init.json"   # created at `vault operator init`; NEVER commit
+TRANSIT_KEYS="$HOME/.vault/transit-init.json"   # gdragon transit Vault (chmod 600, NEVER commit)
 k(){ ssh -o StrictHostKeyChecking=no -i "$KEY" ansible@"$MASTER" "sudo kubectl --kubeconfig=/etc/kubernetes/admin.conf $*"; }
+kk(){ sudo "$K3S" kubectl "$@"; }   # gdragon k3s
 
-echo "== 1/8  ESXi host: clear maintenance mode (silent power-on killer) =="
+echo "== 1/8  Unseal the TRANSIT (auto-unseal) Vault on gdragon k3s =="
+# The cluster Vault can't auto-unseal until this one is unsealed + reachable
+# (192.168.1.181:8200). gdragon k3s + this pod auto-start on boot, but Vault
+# always boots SEALED.
+if kk -n vault-transit get pod vault-transit-0 >/dev/null 2>&1; then
+  for _ in $(seq 1 20); do kk -n vault-transit get pod vault-transit-0 -o jsonpath='{.status.phase}' 2>/dev/null | grep -q Running && break; sleep 5; done
+  if [ -f "$TRANSIT_KEYS" ] && command -v jq >/dev/null; then
+    UKEY=$(jq -r '.unseal_keys_b64[0]' "$TRANSIT_KEYS")
+    kk -n vault-transit exec vault-transit-0 -- sh -c "VAULT_ADDR=http://127.0.0.1:8200 vault operator unseal '$UKEY'" >/dev/null 2>&1 || true
+    echo "  transit Vault: $(kk -n vault-transit exec vault-transit-0 -- sh -c 'VAULT_ADDR=http://127.0.0.1:8200 vault status' 2>/dev/null | grep Sealed | tr -s ' ')"
+  else
+    echo "  WARN: $TRANSIT_KEYS missing — cannot unseal transit Vault (cluster Vault will stay sealed)."
+  fi
+else
+  echo "  NOTE: no vault-transit deployment on gdragon k3s (kubectl apply gdragon/vault-transit/vault-transit.yaml)."
+fi
+
+echo "== 2/8  ESXi host: clear maintenance mode =="
 ssh -o StrictHostKeyChecking=no root@"$ESXI" \
   'vim-cmd hostsvc/maintenance_mode_exit 2>/dev/null; vim-cmd hostsvc/runtimeinfo | grep -i maintenance'
 
-echo "== 2-5/8  Power on the 8 cluster VMs (lb -> masters -> workers) =="
-# cluster_powerup.yml: lb1,lb2,masters,workers; waits for SSH on each.
-# vault-server (.202) is POWERED OFF / decommissioned (2026-06-24) — its DNS role
-# moved to the always-on .203 edge box, Vault runs in-cluster, and its RAM/CPU is
-# reserved for boosting the cluster later. Use all_powerup.yml only if you ever
-# need to revive that VM.
+echo "== 3/8  Power on the 8 cluster VMs (lb -> masters -> workers) =="
+# vault-server (.202) is DECOMMISSIONED (DNS moved to .203; RAM/CPU reclaimed for
+# the 8 GB masters). cluster_powerup.yml powers on lb1/lb2 + 3 masters + 3 workers.
 cd "$ANS"
 ANSIBLE_CONFIG="$PWD/ansible.cfg" ansible-playbook playbooks/cluster_powerup.yml || {
   echo "powerup playbook failed — check ESXi + VM state"; exit 1; }
 
-echo "== 5b/8  FORCE CLOCK STEP on every node (CRITICAL) =="
-# The ESXi host clock drifts; VMware-Tools syncs VMs to the wrong time on boot.
-# Even a few minutes of skew makes etcd time out -> apiservers CrashLoopBackOff
-# -> cluster-wide Forbidden. Step the clock BEFORE expecting k8s to be healthy.
+echo "== 4/8  FORCE CLOCK STEP on every node (CRITICAL) =="
+# VMware-Tools periodic sync is DISABLED (base.yml) so the clock no longer drifts
+# while running, but a boot-time sync can still skew it once. Step it before k8s.
 for ip in 188 185 186 189 187 182 183 184; do
   timeout 15 ssh -o StrictHostKeyChecking=no -o ConnectTimeout=8 -i "$KEY" \
     ansible@192.168.1.$ip 'sudo chronyc makestep >/dev/null 2>&1 && echo "  .'$ip' stepped"' 2>&1 || true
 done
 
-echo "== 5c/8  ENSURE kubelet-required sysctls on every k8s node (CRITICAL) =="
-# kubelet runs with protectKernelDefaults=true (k8s_harden.yml) -> it ASSERTS
-# these host sysctls and REFUSES to start if they don't match. They are NOT
-# persisted by kubeadm, so on a cold boot they revert to kernel defaults and
-# kubelet crashloops ("invalid kernel flag: vm/overcommit_memory expected 1
-# actual 0, kernel/panic expected 10 actual 0") -> no static pods -> no
-# apiserver -> whole cluster down. k8s_harden.yml now persists them in
-# /etc/sysctl.d/99-kubelet.conf; this re-asserts + restarts kubelet as a safety
-# net BEFORE we wait on the API. k8s nodes only (NOT the LBs .188/.185).
+echo "== 5/8  RE-ASSERT kubelet sysctls on every k8s node (CRITICAL) =="
+# kubelet protectKernelDefaults=true asserts these and refuses to start if unset.
+# Persisted in /etc/sysctl.d/99-kubelet.conf (k8s_harden.yml); re-assert as a net.
 for ip in 186 189 187 182 183 184; do
   timeout 25 ssh -o StrictHostKeyChecking=no -o ConnectTimeout=8 -i "$KEY" \
     ansible@192.168.1.$ip 'sudo bash -c "
@@ -71,7 +84,7 @@ done
 
 echo "== wait for k8s API (VIP 192.168.1.50:6443) =="
 for _ in $(seq 1 30); do k get nodes >/dev/null 2>&1 && break; sleep 10; done
-k get nodes || echo "  WARN: k8s API not ready yet — re-check clocks (chronyc tracking)"
+k get nodes || echo "  WARN: k8s API not ready — re-check clocks/sysctls (chronyc tracking, kubelet)."
 
 echo "== 6/8  Wait for GitOps storage + ingress (MetalLB -> Longhorn -> ingress .51) =="
 for _ in $(seq 1 40); do
@@ -82,24 +95,20 @@ for _ in $(seq 1 40); do
   sleep 15
 done
 
-echo "== 7/8  Unseal Vault (boots sealed) =="
-if [ -f "$VAULT_KEYS" ] && command -v jq >/dev/null; then
-  for r in vault-0 vault-1 vault-2; do
-    jq -r '.unseal_keys_b64[:3][]' "$VAULT_KEYS" | while read -r key; do
-      k -n vault exec "$r" -- vault operator unseal "$key" >/dev/null 2>&1 || true
-    done
-  done
-  k -n vault exec vault-0 -- vault status 2>/dev/null | grep -E 'Sealed|HA Mode' || true
-else
-  echo "  SKIP: $VAULT_KEYS not found. Vault not initialized yet, OR keys missing."
-  echo "  First boot only — initialize once:"
-  echo "    kubectl -n vault exec vault-0 -- vault operator init -key-shares=5 -key-threshold=3 -format=json > $VAULT_KEYS"
-  echo "    chmod 600 $VAULT_KEYS   # NEVER commit"
-fi
+echo "== 7/8  Verify Vault HA auto-unsealed (transit — NO manual keys) =="
+# With the transit Vault unsealed (step 1), the 3 cluster Vault pods auto-unseal
+# on startup. Just verify; if any stays sealed, the transit Vault is unreachable.
+for _ in $(seq 1 12); do
+  n=$(for p in vault-0 vault-1 vault-2; do k -n vault exec $p -- vault status 2>/dev/null | awk '/Sealed/{print $2}'; done | grep -c false)
+  echo "  unsealed vault pods: ${n:-0}/3"
+  [ "${n:-0}" = "3" ] && break
+  sleep 10
+done
+[ "${n:-0}" = "3" ] || echo "  WARN: Vault not fully unsealed — check transit Vault (gdragon) + 192.168.1.181:8200 reachability."
 
 echo "== 8/8  Mgmt/security tier =="
-echo "  gdragon k3s:"; systemctl is-active k3s 2>/dev/null && sudo "$K3S" kubectl get pods -A --no-headers 2>/dev/null | grep -E 'awx|openvas' || true
-echo "  edge nginx .203:"; ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_ed25519 bstha@192.168.1.203 'systemctl is-active nginx' 2>/dev/null || true
+echo "  gdragon k3s:"; systemctl is-active k3s 2>/dev/null && kk get pods -A --no-headers 2>/dev/null | grep -E 'awx|openvas' || true
+echo "  edge nginx .203:"; ssh -o StrictHostKeyChecking=no -i "$EDGE_KEY" bstha@192.168.1.203 'systemctl is-active nginx dnsmasq' 2>/dev/null || true
 
 echo
-echo "STARTUP COMPLETE. Endpoints: see docs/architecture.md (## Endpoints)."
+echo "STARTUP COMPLETE. Apps/URLs/creds: docs/ACCESS.md"
