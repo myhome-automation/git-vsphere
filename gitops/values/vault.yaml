@@ -4,6 +4,16 @@
 global:
   tlsDisable: true # intra-cluster plain HTTP; TLS terminates at the edge gateway
 server:
+  # Pin the real HashiCorp Vault image. The chart's default (a retagged OpenBao
+  # 2.0.2, "hashicorp/vault:2.0.2") has a raft + transit-auto-unseal follower bug:
+  # fresh followers join the raft membership but never receive/store the unseal
+  # keys (sealed nodes don't open cluster port 8201 -> leader can't replicate ->
+  # "stored unseal keys ... none found"), so only vault-0 ever unseals. Vault
+  # 1.18.5 delivers the keys via the join challenge/answer so followers
+  # auto-unseal correctly. (Same image the gdragon transit Vault runs.) 2026-06-25.
+  image:
+    repository: hashicorp/vault
+    tag: "1.18.5"
   ha:
     enabled: true
     replicas: 3
