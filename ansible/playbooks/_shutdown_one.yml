@@ -2,10 +2,11 @@
 # STRICT SERIAL: graceful guest shutdown via VMware Tools, then BLOCK until the
 # VM is fully Powered off before the caller moves to the next. Bounded waits +
 # hard power.off fallback — never loops forever.
+# NOTE: remote shell $ must be escaped (\$) so it runs on ESXi, not locally.
 - name: "{{ poweroff.name }} | resolve vmid"
-  shell: >
-    ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@{{ esxi_host }}
-    "vim-cmd vmsvc/getallvms | awk -v n='{{ poweroff.name }}' '$2==n {print $1}'"
+  shell: |
+    ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@{{ esxi_host }} \
+      "vim-cmd vmsvc/getallvms | awk -v n='{{ poweroff.name }}' '\$2==n {print \$1}'"
   register: _vmid
   changed_when: false
 
@@ -14,17 +15,17 @@
   when: _vmid.stdout | trim == ""
 
 - name: "{{ poweroff.name }} | graceful guest shutdown (if on)"
-  shell: >
-    ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@{{ esxi_host }}
-    "state=$(vim-cmd vmsvc/power.getstate {{ _vmid.stdout | trim }} | tail -1);
-     if [ \"$state\" = 'Powered on' ]; then vim-cmd vmsvc/power.shutdown {{ _vmid.stdout | trim }}; echo shutdown_sent; else echo not_on; fi"
+  shell: |
+    ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@{{ esxi_host }} \
+      "state=\$(vim-cmd vmsvc/power.getstate {{ _vmid.stdout | trim }} | tail -1); \
+       if [ \"\$state\" = 'Powered on' ]; then vim-cmd vmsvc/power.shutdown {{ _vmid.stdout | trim }}; echo shutdown_sent; else echo not_on; fi"
   register: _poff
   changed_when: "'shutdown_sent' in _poff.stdout"
 
 - name: "{{ poweroff.name }} | WAIT until Powered off (serial gate, bounded)"
-  shell: >
-    ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@{{ esxi_host }}
-    "vim-cmd vmsvc/power.getstate {{ _vmid.stdout | trim }} | tail -1"
+  shell: |
+    ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@{{ esxi_host }} \
+      "vim-cmd vmsvc/power.getstate {{ _vmid.stdout | trim }} | tail -1"
   register: _state
   until: "'Powered off' in _state.stdout"
   retries: 24          # 24 x 5s = 120s grace for a clean guest shutdown
@@ -33,10 +34,10 @@
   failed_when: false
 
 - name: "{{ poweroff.name }} | hard power.off if still on after grace"
-  shell: >
-    ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@{{ esxi_host }}
-    "state=$(vim-cmd vmsvc/power.getstate {{ _vmid.stdout | trim }} | tail -1);
-     if [ \"$state\" != 'Powered off' ]; then vim-cmd vmsvc/power.off {{ _vmid.stdout | trim }}; echo forced_off; else echo off; fi"
+  shell: |
+    ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@{{ esxi_host }} \
+      "state=\$(vim-cmd vmsvc/power.getstate {{ _vmid.stdout | trim }} | tail -1); \
+       if [ \"\$state\" != 'Powered off' ]; then vim-cmd vmsvc/power.off {{ _vmid.stdout | trim }}; echo forced_off; else echo off; fi"
   register: _hard
   changed_when: "'forced_off' in _hard.stdout"
 
