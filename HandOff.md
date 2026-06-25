@@ -11,7 +11,7 @@
 
 ---
 
-## Current state (2026-06-24 — cluster POWERED UP, converging)
+## Current state (2026-06-24 — cluster STABLE after master RAM boost)
 
 - **Cold-boot brought the cluster back 2026-06-24:** powered off the retired
   `.202` vault-server VM, powered on the 8 cluster VMs (`cluster_powerup.yml`),
@@ -23,40 +23,48 @@
   disable` on all VMs (now in `base.yml`, TODO confirm committed) + makestep at
   boot. (3) Vault sealed-pod crashloop (tight liveness probe) → tolerant probes
   in `gitops/values/vault.yaml`. Force-deleted ~72 stale `Unknown` pods.
-- **★★ ROOT CAUSE of the master flapping = RAM-STARVED CONTROL PLANE.** Masters
-  have only **~3.6 GB RAM each**; the CIS-hardened control plane (etcd + apiserver
-  + controller-mgr + scheduler + calico + kube-proxy) is too tight, so under
-  GitOps reconciliation load etcd/apiserver get evicted/OOM and kubelets stop
-  posting status → masters flap `NotReady` → cluster-wide transient `Forbidden`.
-  Saw kmaster3 with BOTH etcd and apiserver containers down. **FIX = BOOST master
-  RAM/CPU** (power off VM → raise memory in ESXi → power on, one master at a time
-  to keep quorum). The decommissioned `.202` VM's resources are now free for this
-  (the user flagged this exact "boost later if needed"). Until then the cluster is
-  functional but fragile under load; avoid piling on work (big syncs, restarts).
-- **⚠ STILL UNSTABLE AT SESSION PAUSE (2026-06-24 ~18:00):** after heavy churn
-  (ArgoCD controller/repo-server/redis restarts, kube-proxy/calico restarts on
-  kworker2/3), **kmaster1 + kmaster3 went NotReady and masters became
-  SSH-unresponsive** (overloaded on constrained HW) → transient cluster-wide
-  `Forbidden` (1/3 apiservers). LET IT SETTLE before more changes; re-verify
-  `kubectl get nodes` = 6/6 Ready first. kworker2/kworker3 had broken pod→ClusterIP
-  (10.96.0.1) networking post-boot (ArgoCD controller + vault-1/2 exec hung there)
-  — restarted kube-proxy+calico-node on both; recheck.
+- **★★ FIXED — master flapping was RAM-STARVED CONTROL PLANE (4 GB).** The
+  CIS-hardened control plane (etcd+apiserver+controllers+calico) didn't fit in
+  4 GB → under GitOps load etcd/apiserver got evicted, kubelets stopped posting
+  status → masters flapped `NotReady` → transient cluster-wide `Forbidden`.
+  **DONE 2026-06-24: boosted all 3 masters 4 GB → 8 GB** (ESXi: power off VM →
+  `sed memSize="8192"` in the .vmx → `vim-cmd vmsvc/reload` → power on, ONE master
+  at a time keeping etcd quorum; used the freed `.202` headroom). RESULT: **6/6
+  Ready, apiserver restart counts FROZEN (verified stable over 100 s)** — flapping
+  gone. Each reboot came back clean (persisted sysctl + VMware-timesync-disable
+  held: clock 0.000 s, kubelet OK). Masters are 8 GB; workers still 7.5 GB.
+- **PodSecurity `restricted` (CIS, cluster-wide) blocked Jenkins + VSO** — their
+  chart pods/hooks don't set `drop:[ALL]`/seccomp → jenkins-0 `FailedCreate`, VSO
+  `upgrade-crds` hook stuck 21 h. **FIX: set those namespaces to PSA `baseline`**
+  via ArgoCD `managedNamespaceMetadata` (`gitops/apps/jenkins.yaml`,
+  `vault-secrets-operator.yaml`) — baseline blocks privileged/host access but
+  permits the CI/operator pods (harden to restricted later via per-container
+  securityContext). Both now Synced/Healthy.
+- **Post-reboot kworker2/3 pod→ClusterIP (10.96.0.1) was broken** (ArgoCD
+  controller + vault-1/2 exec hung there) — fixed by restarting kube-proxy +
+  calico-node on those nodes. Don't over-restart ArgoCD on this small cluster.
 - **Vault: vault-0 UNSEALED + ACTIVE leader (operational).** vault-1/2 HA unseal
   BLOCKED: fresh-PVC raft followers fail unseal with `failed to create cipher:
   crypto/aes: invalid key size 0` (seal config not synced from leader on join).
   **Proper fix = AUTO-UNSEAL (transit/KMS)** — also removes the manual-key
   security smell. Manual shamir unseal here is fragile (re-seals every restart).
-- **GitOps app status (last seen):** Synced/Healthy = cert-manager(+issuers),
-  gatekeeper(OPA), ingress-nginx, longhorn, metallb(+config), consul, vault.
-  jenkins = Synced/**Progressing** (fixed `controller.admin.username`, deploying).
-  kube-prometheus-stack = **Degraded** (duplicate `kps-*` + `kube-prometheus-stack-*`
-  releases — orphans to prune). vault-secrets-operator = **Missing** (stuck
-  `upgrade-crds` hook deleted; re-syncing). platform-root OutOfSync (app-of-apps).
-- **URLs (path-based on `biplextech.com`, VIP .50 → ingress .51, wildcard TLS):**
-  ArgoCD/Consul `/consul`/Vault `/vault`/Longhorn `/longhorn`/Jenkins `/jenkins`.
-- **NOT YET DONE:** GitHub App pipeline (net-new), Consul service-mesh demo
-  wiring (mesh control plane IS up: 3 servers + connect-injector), VSO secret
-  sync config, full Vault HA. Multi-session effort.
+- **GitOps app status (2026-06-24 end, cluster STABLE):** Synced/Healthy =
+  cert-manager(+issuers), **gatekeeper(OPA)**, ingress-nginx, longhorn,
+  metallb(+config), **vault**, **jenkins** (2/2), **vault-secrets-operator** (2/2).
+  consul = Healthy (OutOfSync drift). kube-prometheus-stack = Synced but
+  **Degraded** (duplicate `kps-*` + `kube-prometheus-stack-*` helm releases —
+  prune the orphaned old release). platform-root OutOfSync (clears as children
+  settle). **Consul service mesh control plane UP:** 3 servers + connect-injector.
+- **URLs (path-based on `biplextech.com`, VIP .50 → ingress .51, wildcard TLS;
+  verified via `--resolve biplextech.com:443:192.168.1.50`):**
+  `/argocd`→200, `/consul`→301, `/vault`→307, `/longhorn`→200, `/jenkins`→403
+  (Jenkins UP but needs the `/jenkins` reverse-proxy prefix configured — minor).
+- **STILL TODO (next session):** (1) Vault HA — vault-1/2 sealed, fresh-PVC raft
+  followers fail unseal `crypto/aes: invalid key size 0` → implement **auto-unseal
+  (transit/KMS)** (also fixes manual-key security smell). (2) kube-prometheus
+  duplicate-release dedup. (3) Jenkins `/jenkins` prefix + GitHub App pipeline
+  (net-new). (4) VSO secret-sync (VaultConnection/VaultAuth/VaultStaticSecret CRs).
+  (5) Consul service-mesh demo wiring. (6) per-app DNS records on `.203`.
 - **ESXi cluster:** 6/6 Ready, kubeadm 1.36.1, CIS-hardened. Built **AWX-first**.
 - **⚠ CONTROL PLANE WAS CRASHLOOPING — root cause CLOCK SKEW** (kmaster1 was
   **703 s slow** of NTP; ESXi host clock drift). etcd `context deadline exceeded`
