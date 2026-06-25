@@ -43,11 +43,26 @@
 - **Post-reboot kworker2/3 pod→ClusterIP (10.96.0.1) was broken** (ArgoCD
   controller + vault-1/2 exec hung there) — fixed by restarting kube-proxy +
   calico-node on those nodes. Don't over-restart ArgoCD on this small cluster.
-- **Vault: vault-0 UNSEALED + ACTIVE leader (operational).** vault-1/2 HA unseal
-  BLOCKED: fresh-PVC raft followers fail unseal with `failed to create cipher:
-  crypto/aes: invalid key size 0` (seal config not synced from leader on join).
-  **Proper fix = AUTO-UNSEAL (transit/KMS)** — also removes the manual-key
-  security smell. Manual shamir unseal here is fragile (re-seals every restart).
+- **★ Vault AUTO-UNSEAL IMPLEMENTED (2026-06-25).** A single-node transit
+  "unseal" Vault runs on the always-on gdragon k3s (`gdragon/vault-transit/`,
+  servicelb `192.168.1.181:8200`, unsealed once; keys `~/.vault/transit-init.json`
+  chmod 600 NEVER commit). The cluster Vault has a `seal "transit"` stanza
+  (`gitops/values/vault.yaml`) with the token via `VAULT_TOKEN` env from secret
+  `vault-transit-token` (NOT git). Migrated shamir→transit on vault-0 with
+  `vault operator unseal -migrate` (shamir keys are now RECOVERY keys). VERIFIED:
+  **vault-0 auto-unseals on restart with NO manual keys**; data intact
+  (agent-registry engine), root token valid, HA Mode active. vault-1/2 HA replicas
+  currently BLOCKED by **Longhorn** (fresh PVCs came up `faulted` after rapid
+  churn on the constrained workers) — not a seal issue; let Longhorn settle / fix
+  the volumes, then they auto-unseal via transit + retry_join. Vault is
+  operational on vault-0.
+- **Consul ACLs ENABLED (2026-06-25):** `global.acls.manageSystemACLs=true`;
+  bootstrap/admin token in secret `consul-bootstrap-acl-token` (retrieve:
+  `kubectl get secret consul-bootstrap-acl-token -n consul -o jsonpath='{.data.token}'|base64 -d`).
+  Consul UI login = that token (Consul uses token auth, no user/pass). NOT in git.
+- **Host-based ingress for Vault + Consul** (their UIs redirect to `/ui` so
+  path-routing 404'd): `vault.biplextech.com` / `consul.biplextech.com` → .50
+  (verified 200). DNS records on `.203` dnsmasq (`dns_biplextech.yml`).
 - **GitOps app status (2026-06-24 end, cluster STABLE):** Synced/Healthy =
   cert-manager(+issuers), **gatekeeper(OPA)**, ingress-nginx, longhorn,
   metallb(+config), **vault**, **jenkins** (2/2), **vault-secrets-operator** (2/2).
@@ -62,7 +77,7 @@
 - **URLs (path-based on `biplextech.com`, VIP .50 → ingress .51, wildcard TLS).
   ALL verified responding (2026-06-24):** `/argocd`(200) `/grafana`(302) `/prometheus`(302)
   `/alertmanager`(200) `/consul`(301) `/vault`(307) `/longhorn`(200) `/jenkins`(403=login).
-  **Login = `admin` / `Nepal!@3`** on ArgoCD, Grafana, Jenkins (verified 200).
+  **Login = `admin` / `<admin-pw>` (stored in K8s Secret, NOT git — see below)** on ArgoCD, Grafana, Jenkins (verified 200).
   Consul/Prometheus/Alertmanager/Longhorn = open UI. Vault = token (root token in
   `~/.vault/biplextech-init.json`). **Loki + OpenSearch/search NOT deployed**
   (a `promtail` DaemonSet exists with no Loki backend — orphan).
@@ -73,17 +88,18 @@
   `/etc/hosts: 192.168.1.50 biplextech.com`, AND trust the CA (`~/biplextech-ca.crt`).
   On the `.203` box itself this needed a systemd-resolved drop-in routing
   `~biplextech.com`→127.0.0.1 (its own dnsmasq), else resolved sent it upstream.
-- **Credentials are CONSISTENT (`admin`/`Nepal!@3`) and NOT in git:** ArgoCD
+- **Credentials are CONSISTENT (`admin`/`<admin-pw>` (stored in K8s Secret, NOT git — see below)) and NOT in git:** ArgoCD
   (live bcrypt patch of `argocd-secret`), Grafana + Jenkins via **`existingSecret`**
   (out-of-band Secrets `grafana-admin-credentials` / `jenkins-admin-credentials`;
   only the secret NAME is in git). Grafana existing-admin pw set via
   `grafana cli admin reset-admin-password` (env doesn't reset an existing user).
-- **STILL TODO (next session):** (1) Vault HA — vault-1/2 sealed, fresh-PVC raft
-  followers fail unseal `crypto/aes: invalid key size 0` → implement **auto-unseal
-  (transit/KMS)** (also fixes manual-key security smell). (2) kube-prometheus
-  duplicate-release dedup. (3) Jenkins `/jenkins` prefix + GitHub App pipeline
-  (net-new). (4) VSO secret-sync (VaultConnection/VaultAuth/VaultStaticSecret CRs).
-  (5) Consul service-mesh demo wiring. (6) per-app DNS records on `.203`.
+- **STILL TODO (next session):** (1) **vault-1/2 HA** — recover the faulted
+  Longhorn volumes (delete+recreate once Longhorn settles, or reduce replica
+  count) so they auto-unseal via transit + rejoin. (2) GitHub App pipeline in
+  Jenkins (net-new; app repo is separate). (3) VSO secret-sync
+  (VaultConnection/VaultAuth/VaultStaticSecret CRs) — migrate the live admin
+  Secrets into Vault and sync them out. (4) Consul service-mesh demo wiring.
+  (5) optional: layer TLS on the gdragon transit Vault.
 - **ESXi cluster:** 6/6 Ready, kubeadm 1.36.1, CIS-hardened. Built **AWX-first**.
 - **⚠ CONTROL PLANE WAS CRASHLOOPING — root cause CLOCK SKEW** (kmaster1 was
   **703 s slow** of NTP; ESXi host clock drift). etcd `context deadline exceeded`
@@ -103,7 +119,7 @@
   ConfigMap** (ArgoCD hadn't synced it) — confirm it syncs so vault-1/2 rejoin
   after reboot.
 - **AWX + OpenVAS:** `https://awx.biplextech.com` / `https://openvas.biplextech.com`
-  (via .203 nginx → .181 Traefik), admin / `Nepal!@3`. **Both verified loginable
+  (via .203 nginx → .181 Traefik), admin / `<admin-pw>` (stored in K8s Secret, NOT git — see below). **Both verified loginable
   2026-06-24 (next session):** AWX token POST → 201; OpenVAS admin pw re-set on the
   live gvmd (`gvmd --user=admin --new-password`) and verified via `gvm-cli ...
   socket <get_version/>` → status 200. (Initial blocker was DNS, not creds.)

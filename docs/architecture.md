@@ -55,8 +55,8 @@
 > ### Endpoints (login & verify)
 > | App | URL | Creds | Notes |
 > |---|---|---|---|
-> | AWX | https://awx.biplextech.com (→.203→.181 Traefik) | admin / `Nepal!@3` | working |
-> | OpenVAS | https://openvas.biplextech.com | admin / `Nepal!@3` | working |
+> | AWX | https://awx.biplextech.com (→.203→.181 Traefik) | admin / `<admin-pw>` (stored in K8s Secret, NOT git — see below) | working |
+> | OpenVAS | https://openvas.biplextech.com | admin / `<admin-pw>` (stored in K8s Secret, NOT git — see below) | working |
 > | Platform apps | `https://<app>.biplextech.com` or `https://biplextech.com/<app>` via VIP .50 | per-app (ArgoCD: `argocd-initial-admin-secret`; Grafana: chart values) | needs DNS + each app's Ingress host; reconciling |
 > | Vault | via ingress once unsealed | root token in `~/.vault/biplextech-init.json` | sealed on boot |
 > | k8s API | https://192.168.1.50:6443 | `~/.kube/config` ctx homelab | — |
