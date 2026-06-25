@@ -10,9 +10,12 @@ server:
   # don't open cluster port 8201 -> leader can't replicate -> "stored unseal keys
   # ... none found"), so only vault-0 unsealed. Reproduced on 2.0.2 AND 2.0.3 even
   # on a fresh 3-node rebuild. 2.1.x fixes the follower auto-unseal path. 2026-06-25.
+  # 2.3.1: the 2.1.x image has NO web UI compiled in ("OpenBao UI is not available
+  # in this binary"); 2.3.x bundles the UI. (HA works on any version once the
+  # cluster listener binds IPv4 — see the listener config above.)
   image:
     repository: openbao/openbao
-    tag: "2.1.1"
+    tag: "2.3.1"
   ha:
     enabled: true
     replicas: 3
