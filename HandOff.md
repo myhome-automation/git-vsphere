@@ -273,6 +273,14 @@
   caused "unable to get vault token" — fixed the active-platform docs/playbook to
   `biplextech-init.json` (2026-06-25). (`~/.vault/transit-init.json` = the gdragon
   auto-unseal transit vault.)
+- **Vault UI 503 after OpenBao image pin:** the chart's `vault-active` Service
+  selects `vault-active=true`, but OpenBao labels the leader `openbao-active=true`
+  -> 0 endpoints -> 503. Fix: `server.ingress.activeService: false` (ingress -> the
+  `vault` Service, all pods; standbys forward to the leader over 8201). 2026-06-25.
+- **Platform UIs are HOST-based now** (path routing 404'd): `vault.biplextech.com`,
+  `consul.biplextech.com`, `longhorn.biplextech.com`, `grafana`/`prometheus` too.
+  A browsing CLIENT must resolve `*.biplextech.com -> .50` (point DNS at .203 OR
+  add /etc/hosts) AND trust `~/biplextech-ca.crt`. Verified all 200 from .203.
 - **ESXi maintenance mode = silent power-on killer.** Always
   `vim-cmd hostsvc/maintenance_mode_exit` before powering VMs.
 - **"No route to host" on the SAME subnet = ARP failure = the target VM is
