@@ -17,18 +17,26 @@
 > next-steps, and the running list of mistakes-made-and-fixed so they are not
 > repeated. This §0 is the high-level plan; `HandOff.md` is the working memory.
 
-**Last updated:** 2026-06-24 (end of session, powered off) — platform built
-AWX-first; no-NodePort exposure (MetalLB→ingress), biplextech.com wildcard TLS,
-Longhorn storage. Vault: vault-0 unsealed leader, vault-1/2 joined raft but
-SEALED. **⚠ Clock skew (ESXi drift) crashlooped the control plane — fixed with
-`chronyc makestep`; recurs every boot until VMware-Tools time sync is fixed.
-After any boot run `chronyc makestep` first (or `scripts/platform-startup.sh`).**
-Full detail + lessons + resume steps in `HandOff.md`.
+**Last updated:** 2026-06-25 — **platform OPERATIONAL & nightly-reboot resilient.**
+no-NodePort exposure (MetalLB→ingress), `*.biplextech.com` wildcard TLS, Longhorn
+storage. **Vault = real HashiCorp Vault 2.0.3, 3-node HA, transit AUTO-UNSEAL**
+(transit Vault on the always-on gdragon k3s). Consul mesh + ACLs, OPA Gatekeeper,
+kube-prometheus, Jenkins, AWX, OpenVAS all up. **Apps / URLs / creds: see
+[`docs/ACCESS.md`](docs/ACCESS.md).** Full lessons + working state in `HandOff.md`.
+
+**★ Nightly shutdown/startup:** the lab powers off each night. Bring it back with
+`scripts/platform-startup.sh` (auto-runs on gdragon boot via
+`platform-startup.service`). Down with `scripts/platform-shutdown.sh`. Durable
+auto-recovery fixes baked in: VMware-Tools time-sync DISABLED + `chronyc makestep`
+at boot (no clock skew); kubelet `protectKernelDefaults` sysctls persisted
+(`/etc/sysctl.d/99-kubelet.conf`); Vault raft listener on **IPv4 `0.0.0.0`** (IPv6
+disabled cluster-wide); masters boosted to **8 GB**; Longhorn over-provision 200%.
 
 _(historical plan note, 2026-06-22: gdragon mgmt/security host + domain split)_
 
-**Cluster:** kubeadm v1.36.1, 3 masters + 3 workers, Calico v3.30.4, all Ready.
-Context `homelab`. **No StorageClass yet. No LB controller (by design — external).**
+**Cluster:** kubeadm v1.36.1, 3 masters (**8 GB** each) + 3 workers, Calico
+v3.30.4, all Ready. Context `homelab`. StorageClass = **Longhorn** (default);
+LB = **MetalLB** (ingress .51) behind keepalived VIP **.50**.
 
 **gdragon** (192.168.1.181, this host) is now the **mgmt/security box** — a
 single-node **k3s** cluster running **AWX + OpenVAS (GVM)**, both on k3s for one
@@ -48,11 +56,11 @@ currently still uses `biplextech.com`. See §9.
       argocd values), 10 app-of-apps Applications waves 0–8, path-based values,
       cert-manager issuers + biplextech cert. Pinned chart versions. **Not yet
       applied** — needs ArgoCD bootstrap on the live cluster.
-- [x] **DNS applied & verified** — `vault-server` .202 authoritative for
-      `biplextech.com` via dnsmasq; apex `biplextech.com → .50` (path-based, no
-      wildcard), node A records, upstream forwarding. All 9 VMs flipped to .202
-      (primary) + 8.8.8.8 (secondary) via NetworkManager. Verify:
-      `dig @192.168.1.202 biplextech.com +short` → `192.168.1.50`.
+- [x] **DNS** — authoritative `biplextech.com` MOVED (2026-06-24) to the
+      always-on **.203** Ubuntu edge box (off the decommissioned .202 VM).
+      `dns_biplextech.yml`, `[dns]`→`gdragon-edge`, `dns_server: .203`. Apex →.50;
+      host records for vault/consul/longhorn/grafana →.50, awx/openvas →.203.
+      Verify: `dig @192.168.1.203 vault.biplextech.com +short` → `192.168.1.50`.
 - [x] **Istio removed** (`istio_remove.yml`) — istio-system gone, 0 CRDs, 0
       webhooks, 0 pods. **Surfaced + fixed a firewalld regression:** firewalld
       (nftables) drops forwarded *host→pod* packets (trusted zone matches SOURCE

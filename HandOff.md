@@ -11,7 +11,24 @@
 
 ---
 
-## Current state (2026-06-24 — cluster STABLE after master RAM boost)
+## Current state (2026-06-25 — OPERATIONAL & nightly-reboot resilient)
+
+- **★ Whole platform is up and survives the nightly shutdown.** Bring up:
+  `scripts/platform-startup.sh` (auto-runs on gdragon boot via
+  `platform-startup.service`); bring down: `scripts/platform-shutdown.sh`.
+  **Apps / URLs / creds: [`docs/ACCESS.md`](docs/ACCESS.md).** Startup order:
+  (1) unseal gdragon TRANSIT Vault → cluster Vault then AUTO-unseals; (2) ESXi
+  maint-exit; (3) `cluster_powerup`; (4) `chronyc makestep`; (5) re-assert kubelet
+  sysctls; (6) wait GitOps storage+ingress; (7) verify Vault HA; (8) mgmt tier.
+- **Vault = real HashiCorp Vault 2.0.3**, 3-node raft HA, **transit auto-unseal**
+  (transit Vault on gdragon k3s `192.168.1.181:8200`; `gdragon/vault-transit/`).
+  Real Vault image ships the UI (OpenBao 2.0.x/2.1.x images did NOT). HA needed
+  the raft listener on **IPv4 `0.0.0.0`** (IPv6 disabled cluster-wide).
+- **Durable cold-boot fixes (all in IaC):** VMware-Tools timesync OFF (`base.yml`)
+  + makestep at boot; kubelet sysctls persisted (`k8s_harden.yml` Play 3.9);
+  masters 8 GB; Longhorn over-provision 200%; Vault tolerant probes.
+
+### (prior milestone) cluster STABLE after master RAM boost
 
 - **Cold-boot brought the cluster back 2026-06-24:** powered off the retired
   `.202` vault-server VM, powered on the 8 cluster VMs (`cluster_powerup.yml`),

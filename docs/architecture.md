@@ -1,6 +1,7 @@
  Architecture — Home Lab Kubernetes on ESXi
 
-> ## ✅ CURRENT PLATFORM ARCHITECTURE — 2026-06-23 (supersedes older sections below)
+> ## ✅ CURRENT PLATFORM ARCHITECTURE — 2026-06-25 (supersedes older sections below)
+> **Apps / URLs / credentials: [`ACCESS.md`](ACCESS.md).**
 >
 > The bare kubeadm cluster is now a **GitOps-managed platform**, built and
 > operated **AWX-first** (AWX orchestrates Ansible; ArgoCD app-of-apps then runs
@@ -13,8 +14,8 @@
 > | ESXi hypervisor | 192.168.1.174 | 9 platform VMs |
 > | k8s control plane | kmaster1/2/3 (.186/.189/.187) | kubeadm 1.36.1, CIS-hardened |
 > | k8s workers | kworker1/2/3 (.182/.183/.184) | platform workloads |
-> | Edge LB pair | lb1 .188 (VIP MASTER) / lb2 .185 (BACKUP) | HAProxy + keepalived VIP **.50** + dnsmasq |
-> | DNS | vault-server **.202** | authoritative for biplextech.com |
+> | Edge LB pair | lb1 .188 (VIP MASTER) / lb2 .185 (BACKUP) | HAProxy + keepalived VIP **.50** |
+> | DNS | gdragon-edge **.203** (dnsmasq) | authoritative for biplextech.com (moved off the decommissioned .202 VM) |
 > | Mgmt/security | gdragon **.181** | single-node **k3s**: AWX + OpenVAS; Ansible/Terraform control; repo host |
 > | Edge proxy | gdragon-edge **.203** | Ubuntu, system nginx → AWX/OpenVAS (HTTPS) |
 >
@@ -40,30 +41,38 @@
 > Bootstrapped by `ansible/playbooks/argocd_bootstrap_awx.yml` (runs on kmaster1).
 > Storage = **Longhorn** (default StorageClass; hostPath, no storage cycle).
 >
-> ### Cold-boot safety (home server reboots often)
-> No circular deadlocks: webhooks that touch general pods are `failurePolicy:
-> Ignore` (Consul, ingress-nginx); ArgoCD has no PVC; Longhorn needs no
-> StorageClass; infra namespaces are PSA-`privileged`. Full design + the one
-> manual step (Vault unseal-on-boot) in **[cold-boot-resilience.md](cold-boot-resilience.md)**.
+> ### Cold-boot safety — NIGHTLY shutdown, AUTO-recovery
+> The lab powers off each night and must come back unattended. No circular
+> deadlocks (Consul/ingress webhooks `failurePolicy: Ignore`; ArgoCD no PVC;
+> infra namespaces PSA `privileged`/`baseline`). Durable boot fixes:
+> - **Clock:** VMware-Tools time sync DISABLED (`base.yml`) + `chronyc makestep`
+>   at boot — no more etcd-killing skew.
+> - **kubelet:** `protectKernelDefaults` sysctls persisted in
+>   `/etc/sysctl.d/99-kubelet.conf` (`k8s_harden.yml`) — kubelet starts clean.
+> - **Vault:** **transit auto-unseal** — no manual key entry. The transit Vault on
+>   the always-on gdragon k3s boots sealed and is unsealed by startup step 1; the
+>   cluster Vault then auto-unseals. Raft listener on IPv4 `0.0.0.0` (IPv6 off).
+> - **Masters 8 GB**, Longhorn over-provision 200%. See **[cold-boot-resilience.md](cold-boot-resilience.md)**.
 >
-> ### Startup / shutdown (ordered)
-> - **Up:** `scripts/platform-startup.sh` — ESXi maint-exit → power VMs
->   (DNS→LB→masters→workers) → wait k8s → wait GitOps (MetalLB→Longhorn→ingress
->   .51) → **unseal Vault** → verify gdragon k3s + .203 nginx.
-> - **Down:** `scripts/platform-shutdown.sh` — reverse order (workers→masters→LB→DNS).
+> ### Startup / shutdown (ordered) — `scripts/`
+> - **Up:** `platform-startup.sh` (auto-runs on gdragon boot via
+>   `platform-startup.service`): unseal gdragon transit Vault → ESXi maint-exit →
+>   `cluster_powerup` (lb→masters→workers) → `chronyc makestep` → re-assert kubelet
+>   sysctls → wait GitOps (MetalLB→Longhorn→ingress .51) → verify Vault HA
+>   auto-unsealed → verify AWX/OpenVAS + edge.
+> - **Down:** `platform-shutdown.sh` → `cluster_shutdown.yml` (workers→masters→LB;
+>   gdragon/edge keep running). Vault seals itself; Longhorn PVCs Retain.
 >
-> ### Endpoints (login & verify)
-> | App | URL | Creds | Notes |
-> |---|---|---|---|
-> | AWX | https://awx.biplextech.com (→.203→.181 Traefik) | admin / `<admin-pw>` (stored in K8s Secret, NOT git — see below) | working |
-> | OpenVAS | https://openvas.biplextech.com | admin / `<admin-pw>` (stored in K8s Secret, NOT git — see below) | working |
-> | Platform apps | `https://<app>.biplextech.com` or `https://biplextech.com/<app>` via VIP .50 | per-app (ArgoCD: `argocd-initial-admin-secret`; Grafana: chart values) | needs DNS + each app's Ingress host; reconciling |
-> | Vault | via ingress once unsealed | root token in `~/.vault/biplextech-init.json` | sealed on boot |
-> | k8s API | https://192.168.1.50:6443 | `~/.kube/config` ctx homelab | — |
+> ### Endpoints
+> **All apps, URLs, and credentials → [`ACCESS.md`](ACCESS.md).** Summary: platform
+> apps on `*.biplextech.com` (host-based: vault/consul/longhorn) or
+> `biplextech.com/<path>` (argocd/grafana/prometheus/jenkins) via VIP **.50**;
+> AWX/OpenVAS on `awx`/`openvas.biplextech.com` via **.203**. k8s API
+> `https://192.168.1.50:6443` (`~/.kube/config` ctx homelab).
 >
 > **DNS reminder:** `*.biplextech.com` must resolve — platform names → `.50`,
-> `awx`/`openvas` → `.203`. Authoritative on `.202` (dnsmasq); until that's up
-> use `/etc/hosts` (`IP hostname` order!).
+> `awx`/`openvas` → `.203`. Authoritative on **.203** dnsmasq; clients point DNS at
+> `.203` or use `/etc/hosts` (`IP hostname` order!), and trust `~/biplextech-ca.crt`.
 >
 > ---
 
