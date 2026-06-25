@@ -96,6 +96,11 @@ server:
   ingress:
     enabled: true
     ingressClassName: nginx
+    # Point at the `vault` service (all pods), NOT `vault-active`: OpenBao labels
+    # the leader `openbao-active=true` but the chart's vault-active service selects
+    # `vault-active=true` -> 0 endpoints -> 503. With 8201 forwarding working
+    # (IPv4 fix), standby pods transparently forward to the active leader.
+    activeService: false
     pathType: Prefix
     hosts:
       - host: vault.biplextech.com
