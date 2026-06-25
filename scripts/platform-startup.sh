@@ -17,6 +17,7 @@
 #                                -> Consul -> Gatekeeper -> Prometheus -> Jenkins
 #   7. Verify Vault HA           all 3 AUTO-unsealed via transit (no manual keys)
 #   8. Mgmt/security             AWX/OpenVAS (gdragon k3s) + edge nginx (.203)
+#   9. OpenVAS scan              auto-start 'Scan all homelab hosts' (all hosts up)
 #
 # DNS for biplextech.com is authoritative on the always-on .203 edge box (NOT in
 # the ESXi cluster, NOT on the decommissioned .202 VM). See docs/architecture.md
@@ -106,9 +107,31 @@ for _ in $(seq 1 12); do
 done
 [ "${n:-0}" = "3" ] || echo "  WARN: Vault not fully unsealed — check transit Vault (gdragon) + 192.168.1.181:8200 reachability."
 
-echo "== 8/8  Mgmt/security tier =="
+echo "== 8/9  Mgmt/security tier =="
 echo "  gdragon k3s:"; systemctl is-active k3s 2>/dev/null && kk get pods -A --no-headers 2>/dev/null | grep -E 'awx|openvas' || true
 echo "  edge nginx .203:"; ssh -o StrictHostKeyChecking=no -i "$EDGE_KEY" bstha@192.168.1.203 'systemctl is-active nginx dnsmasq' 2>/dev/null || true
+
+echo "== 9/9  Kick off the OpenVAS scan (after-reboot vuln scan of all hosts) =="
+# Auto-start the 'Scan all homelab hosts' task once gvmd is responsive. All hosts
+# are up by now (cluster powered on above). OpenVAS admin password is read LIVE
+# from the openvas-admin Secret (NOT in git). Bounded waits — never hangs.
+OVPOD=$(kk -n security get pod -l app=openvas -o name 2>/dev/null | head -1); OVPOD=${OVPOD#pod/}
+if [ -n "$OVPOD" ]; then
+  OVPW=$(kk -n security get secret openvas-admin -o jsonpath='{.data.PASSWORD}' 2>/dev/null | base64 -d 2>/dev/null)
+  GVM(){ kk -n security exec "$OVPOD" -- su -s /bin/sh gvm -c "gvm-cli --gmp-username admin --gmp-password '$OVPW' socket --socketpath /run/gvmd/gvmd.sock --xml '$1'" 2>/dev/null; }
+  echo "  waiting for gvmd (loads VTs after boot)..."
+  for _ in $(seq 1 30); do GVM '<get_version/>' | grep -q 'status="200"' && break; sleep 10; done
+  TASK="Scan all homelab hosts"
+  TID=$(GVM '<get_tasks/>' | tr '>' '>\n' | grep -B1 "<name>$TASK</name>" | grep -oE 'task id="[^"]+"' | head -1 | sed 's/task id="//;s/"//')
+  if [ -n "$TID" ]; then
+    st=$(GVM "<get_tasks task_id=\"$TID\"/>" | grep -oE '<status>[A-Za-z]+</status>' | head -1 | sed 's/<[^>]*>//g')
+    if echo "$st" | grep -qiE 'Running|Requested|Queued'; then echo "  task already $st"; else GVM "<start_task task_id=\"$TID\"/>" | grep -oE 'status_text="[^"]*"' | sed 's/^/  start: /'; fi
+  else
+    echo "  WARN: task '$TASK' not found (create it in OpenVAS first)."
+  fi
+else
+  echo "  OpenVAS pod not found — skipping scan kickoff."
+fi
 
 echo
 echo "STARTUP COMPLETE. Apps/URLs/creds: docs/ACCESS.md"
