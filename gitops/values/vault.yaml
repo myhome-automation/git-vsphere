@@ -4,15 +4,15 @@
 global:
   tlsDisable: true # intra-cluster plain HTTP; TLS terminates at the edge gateway
 server:
-  # Pin OpenBao 2.1 stable. The chart default was a retagged OpenBao 2.0.2 with a
-  # raft + transit-auto-unseal follower bug: fresh followers join the raft
+  # Pin OpenBao 2.0.3 stable. The chart default was a retagged OpenBao 2.0.2 with
+  # a raft + transit-auto-unseal follower bug: fresh followers join the raft
   # membership but never receive/store the unseal keys (sealed nodes don't open
   # cluster port 8201 -> leader can't replicate -> "stored unseal keys ... none
-  # found"), so only vault-0 unsealed. 2.1.x fixes the follower auto-unseal path.
-  # No data lost (cluster was freshly rebuilt). 2026-06-25.
+  # found"), so only vault-0 unsealed. 2.0.3 is the patched stable. No data lost
+  # (cluster was freshly rebuilt). 2026-06-25.
   image:
     repository: openbao/openbao
-    tag: "2.1.1"
+    tag: "2.0.3"
   ha:
     enabled: true
     replicas: 3
