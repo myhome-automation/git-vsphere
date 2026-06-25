@@ -231,6 +231,13 @@
   push masters to NotReady. To pick up a new git commit, prefer a hard refresh
   (`kubectl annotate app … argocd.argoproj.io/refresh=hard`) and patience; only
   restart repo-server if a stale manifest truly persists.
+- **TWO vault init files on gdragon — use the RIGHT one.** `~/.vault/init.json`
+  is the OLD/retired k3s-era vault (stale token `hvs.ZN2…`, INVALID on the current
+  cluster). The CURRENT ESXi-cluster vault token is in
+  **`~/.vault/biplextech-init.json`** (`hvs.6uRV…`). Docs that said `init.json`
+  caused "unable to get vault token" — fixed the active-platform docs/playbook to
+  `biplextech-init.json` (2026-06-25). (`~/.vault/transit-init.json` = the gdragon
+  auto-unseal transit vault.)
 - **ESXi maintenance mode = silent power-on killer.** Always
   `vim-cmd hostsvc/maintenance_mode_exit` before powering VMs.
 - **"No route to host" on the SAME subnet = ARP failure = the target VM is

@@ -24,7 +24,7 @@ Deployed via ArgoCD — see `argocd/vault.yaml`.
 
 ## Unseal keys + root token
 
-Stored at `~/.vault/init.json` on the workstation (chmod 600). Move
+Stored at `~/.vault/biplextech-init.json` on the workstation (chmod 600). Move
 these to your password manager and remove the file from disk afterward.
 Never commit them to git.
 
@@ -41,12 +41,12 @@ Vault is initialized with **5 unseal-key shares, threshold 3**.
 ## Re-unseal procedure (after pod restart or cluster restart)
 
 Vault on Raft requires manual unseal of every replica on each boot.
-The unseal keys live in `~/.vault/init.json` on the workstation:
+The unseal keys live in `~/.vault/biplextech-init.json` on the workstation:
 
 ```bash
-ROOT=$(jq -r .root_token ~/.vault/init.json)
+ROOT=$(jq -r .root_token ~/.vault/biplextech-init.json)
 for r in vault-0 vault-1 vault-2; do
-  jq -r '.unseal_keys_b64[:3][]' ~/.vault/init.json | while read key; do
+  jq -r '.unseal_keys_b64[:3][]' ~/.vault/biplextech-init.json | while read key; do
     kubectl --context k3os-local -n vault exec $r -- vault operator unseal "$key"
   done
 done

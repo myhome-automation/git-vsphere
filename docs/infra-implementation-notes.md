@@ -629,23 +629,23 @@ One-time init (vault-0 only):
 mkdir -p ~/.vault
 kubectl --context k3os-local -n vault exec vault-0 -- \
   vault operator init -key-shares=5 -key-threshold=3 -format=json \
-  > ~/.vault/init.json
-chmod 600 ~/.vault/init.json
+  > ~/.vault/biplextech-init.json
+chmod 600 ~/.vault/biplextech-init.json
 ```
 
 Unseal each pod (3 keys reach the threshold):
 ```bash
 for r in vault-0 vault-1 vault-2; do
-  jq -r '.unseal_keys_b64[:3][]' ~/.vault/init.json | while read key; do
+  jq -r '.unseal_keys_b64[:3][]' ~/.vault/biplextech-init.json | while read key; do
     kubectl --context k3os-local -n vault exec $r -- \
       vault operator unseal "$key" 2>/dev/null || true
   done
 done
 ```
 
-Enable KV-v2 + AppRole (root token from `~/.vault/init.json`):
+Enable KV-v2 + AppRole (root token from `~/.vault/biplextech-init.json`):
 ```bash
-ROOT=$(jq -r .root_token ~/.vault/init.json)
+ROOT=$(jq -r .root_token ~/.vault/biplextech-init.json)
 kubectl --context k3os-local -n vault exec vault-0 -- env VAULT_TOKEN="$ROOT" \
   vault secrets enable -path=secret kv-v2
 kubectl --context k3os-local -n vault exec vault-0 -- env VAULT_TOKEN="$ROOT" \
@@ -915,7 +915,7 @@ Four tiers, smallest scope to largest:
 2. Power on all 9 VMs (vault-server → LBs → masters → workers).
 3. `chronyc makestep` on each VM to absorb ESXi clock drift.
 4. Probe k8s API + DNS via the keepalived VIP.
-5. Unseal Vault (`vault_unseal.yml`) with keys from `~/.vault/init.json`.
+5. Unseal Vault (`vault_unseal.yml`) with keys from `~/.vault/biplextech-init.json`.
 6. (Re)start edge nginx pair and probe all six routes.
 
 `full_shutdown.yml` reverses the order: edge nginx stops first (so users
@@ -1020,13 +1020,13 @@ kubectl --context k3os-local -n monitoring exec prometheus-kps-prometheus-0 -c p
 - Prometheus: `http://192.168.1.203/prometheus/`
 - Loki (no UI): `http://192.168.1.203/loki/ready`
 - ArgoCD: `http://192.168.1.203/argocd/` (admin / initial-admin-secret)
-- Vault: `http://192.168.1.203/ui/` (Token method, root from `~/.vault/init.json`)
+- Vault: `http://192.168.1.203/ui/` (Token method, root from `~/.vault/biplextech-init.json`)
 
 **Credentials cheatsheet:**
 - ansible-vault password: `ansible/.vault_pass` on the workstation (gitignored).
 - SSH key for ansible user on cluster VMs: `/apps/git-code/keys/ansible-key`.
 - `bstha` SSH key for ongoing work: `~/.ssh/id_ed25519` (workstation default).
-- Vault root token + unseal keys: `~/.vault/init.json` on the workstation (chmod 600). **Move to a password manager and wipe from disk for production-grade hygiene.**
+- Vault root token + unseal keys: `~/.vault/biplextech-init.json` on the workstation (chmod 600). **Move to a password manager and wipe from disk for production-grade hygiene.**
 - ArgoCD admin password: `kubectl --context k3os-local -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d`.
 - Grafana admin password: `changeme-home-lab` (in `monitoring/local-k3s/kube-prometheus-stack-values.yaml`; rotate via `helm upgrade --set grafana.adminPassword=...`).
 - quay.io robot creds: ansible-vault encrypted at `ansible/group_vars/all/vault.yml`.

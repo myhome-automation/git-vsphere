@@ -70,7 +70,7 @@ What it does, in order:
 3. `chronyc makestep` on every VM to absorb any clock drift inherited
    from ESXi.
 4. Probe k8s API + DNS via the keepalived VIP.
-5. **Unseal Vault** on local k3s using `~/.vault/init.json` keys
+5. **Unseal Vault** on local k3s using `~/.vault/biplextech-init.json` keys
    (vault-0 leader; vault-1 may still CrashLoopBackOff due to the
    IPPool overlap — known limitation).
 6. (Re)start the edge nginx pair on .203 and probe all six proxy paths.
@@ -330,7 +330,7 @@ kubectl --context k3os-local -n vault get sts vault \
 ```bash
 # All pods, applying first 3 unseal keys from init.json
 for r in vault-0 vault-1 vault-2; do
-  jq -r '.unseal_keys_b64[:3][]' ~/.vault/init.json | while read key; do
+  jq -r '.unseal_keys_b64[:3][]' ~/.vault/biplextech-init.json | while read key; do
     kubectl --context k3os-local -n vault exec $r -- \
       vault operator unseal "$key" 2>/dev/null || true
   done

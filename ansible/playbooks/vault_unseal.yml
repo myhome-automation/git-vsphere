@@ -6,7 +6,7 @@
 # sealedcode=204 so the pod stays alive, but the Service isn't ready
 # until we unseal.
 #
-# Reads keys from ~/.vault/init.json on the workstation (chmod 600).
+# Reads keys from ~/.vault/biplextech-init.json on the workstation (chmod 600).
 # Applies the first 3 unseal keys to each of vault-0, vault-1, vault-2.
 # Non-fatal if some pods are unreachable (e.g. vault-1 still
 # CrashLoopBackOff due to Calico IPPool overlap on local k3s).
@@ -23,7 +23,7 @@
   gather_facts: false
 
   vars:
-    init_file: "{{ lookup('env', 'HOME') }}/.vault/init.json"
+    init_file: "{{ lookup('env', 'HOME') }}/.vault/biplextech-init.json"
     kube_context: k3os-local
     namespace: vault
     pods:

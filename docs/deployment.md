@@ -257,12 +257,12 @@ kubectl --context k3os-local apply -f argocd/vault.yaml
 
 # Init once (vault-0 is leader)
 kubectl --context k3os-local -n vault exec vault-0 -- vault operator init \
-  -key-shares=5 -key-threshold=3 -format=json > ~/.vault/init.json
-chmod 600 ~/.vault/init.json
+  -key-shares=5 -key-threshold=3 -format=json > ~/.vault/biplextech-init.json
+chmod 600 ~/.vault/biplextech-init.json
 
 # Unseal vault-0 (and any other pods that came up)
 for r in vault-0 vault-1 vault-2; do
-  jq -r '.unseal_keys_b64[:3][]' ~/.vault/init.json | while read key; do
+  jq -r '.unseal_keys_b64[:3][]' ~/.vault/biplextech-init.json | while read key; do
     kubectl --context k3os-local -n vault exec $r -- \
       vault operator unseal "$key" 2>/dev/null || true
   done
