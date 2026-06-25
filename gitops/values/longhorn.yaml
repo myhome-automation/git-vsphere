@@ -8,6 +8,11 @@ defaultSettings:
   defaultReplicaCount: 2
   defaultDataPath: /var/lib/longhorn
   storageMinimalAvailablePercentage: 15
+  # Over-provision 200%: disks reserve 30% + the sum of REQUESTED replica sizes
+  # was ~hitting the 100% cap (only ~1.6 Gi schedulable) -> new replicas failed
+  # `insufficient storage` even with ~50 Gi actually free. Actual usage is low,
+  # so over-committing is safe here and lets vault/consul/etc. volumes schedule.
+  storageOverProvisioningPercentage: 200
 # Disable the pre-upgrade hook job: on a fresh ArgoCD install it runs before the
 # chart's ServiceAccount exists and fails ("longhorn-service-account not found"),
 # blocking the whole Longhorn sync. Not needed for a first install.
@@ -16,13 +21,14 @@ preUpgradeChecker:
 service:
   ui:
     type: ClusterIP
-# Path-based behind the edge gateway: https://biplextech.com/longhorn
-# Longhorn UI has no native sub-path, so strip the prefix at the ingress.
+# HOST-based: the Longhorn UI has no native sub-path, so path routing
+# (/longhorn) loads a blank page (assets reference absolute /). Serve it at
+# longhorn.biplextech.com (DNS -> .50 on .203 dnsmasq); TLS via wildcard.
 ingress:
   enabled: true
   ingressClassName: nginx
-  host: biplextech.com
-  path: /longhorn(/|$)(.*)
+  host: longhorn.biplextech.com
+  path: /
   pathType: ImplementationSpecific
   annotations:
     nginx.ingress.kubernetes.io/rewrite-target: /$2
