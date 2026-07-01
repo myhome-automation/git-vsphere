@@ -99,6 +99,38 @@ done
 echo "== 7/8  Verify Vault HA auto-unsealed (transit — NO manual keys) =="
 # With the transit Vault unsealed (step 1), the 3 cluster Vault pods auto-unseal
 # on startup. Just verify; if any stays sealed, the transit Vault is unreachable.
+
+# --- SELF-HEAL the transit auto-unseal token (prevents the CrashLoopBackOff seen
+# when the transit Vault is re-created / the token expires -> cluster Vault pods
+# fail auto-unseal with "403 permission denied / invalid token"). Idempotent:
+# only reissues when the current cluster-side token no longer validates. ---------
+ensure_transit_token() {
+  [ -f "$TRANSIT_KEYS" ] && command -v jq >/dev/null || { echo "  (no transit keys/jq — skip token self-heal)"; return; }
+  local RT CTOK NEWTOK
+  RT=$(jq -r '.root_token' "$TRANSIT_KEYS" 2>/dev/null); [ -n "$RT" ] && [ "$RT" != null ] || return
+  CTOK=$(k -n vault get secret vault-transit-token -o jsonpath='{.data.token}' 2>/dev/null | base64 -d 2>/dev/null)
+  if [ -n "$CTOK" ] && kk -n vault-transit exec vault-transit-0 -- sh -c \
+       "VAULT_ADDR=http://127.0.0.1:8200 VAULT_TOKEN='$RT' vault token lookup '$CTOK'" >/dev/null 2>&1; then
+    echo "  transit token: valid"; return
+  fi
+  echo "  transit token: BAD/expired — reissuing (periodic 768h, policy=autounseal)"
+  # (re)assert the autounseal policy (survives on persistent storage, but idempotent for a fresh transit Vault)
+  printf 'path "transit/encrypt/autounseal" { capabilities = ["update"] }\npath "transit/decrypt/autounseal" { capabilities = ["update"] }\n' \
+    | kk -n vault-transit exec -i vault-transit-0 -- sh -c \
+        "VAULT_ADDR=http://127.0.0.1:8200 VAULT_TOKEN='$RT' vault policy write autounseal -" >/dev/null 2>&1
+  NEWTOK=$(kk -n vault-transit exec vault-transit-0 -- sh -c \
+    "VAULT_ADDR=http://127.0.0.1:8200 VAULT_TOKEN='$RT' vault token create -orphan -policy=autounseal -period=768h -field=token" 2>/dev/null)
+  if [ -n "$NEWTOK" ] && [ "${NEWTOK:0:4}" = "hvs." ]; then
+    k -n vault create secret generic vault-transit-token --from-literal=token="$NEWTOK" --dry-run=client -o yaml \
+      | k apply -f - >/dev/null 2>&1
+    k -n vault delete pod vault-0 vault-1 vault-2 --wait=false >/dev/null 2>&1
+    echo "  reissued transit token + updated secret + restarted vault pods"
+  else
+    echo "  WARN: could not reissue transit token (is vault-transit-0 unsealed? see step 1)"
+  fi
+}
+ensure_transit_token
+
 for _ in $(seq 1 12); do
   n=$(for p in vault-0 vault-1 vault-2; do k -n vault exec $p -- vault status 2>/dev/null | awk '/Sealed/{print $2}'; done | grep -c false)
   echo "  unsealed vault pods: ${n:-0}/3"

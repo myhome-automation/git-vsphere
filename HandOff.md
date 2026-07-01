@@ -13,6 +13,25 @@
 
 ## Current state (2026-06-25 — OPERATIONAL & nightly-reboot resilient)
 
+- **★ Vault auto-unseal is now SELF-HEALING (2026-07-01).** Incident: the 3
+  cluster Vault pods CrashLoopBackOff'd (`403 permission denied / invalid token`)
+  after the gdragon **transit** Vault restarted — the `vault-transit-token` k8s
+  secret held a token that no longer existed on the transit Vault (`bad token`).
+  Fixed live (minted a fresh periodic-768h orphan token on the `autounseal`
+  policy, updated the secret, restarted the pods → 3/3 unsealed, HA healthy).
+  **Durable fix committed:** `platform-startup.sh` step 7 now runs
+  `ensure_transit_token()` — it validates the cluster-side token against the
+  transit Vault on every startup and, if bad/expired, reissues (periodic 768h,
+  `autounseal` policy), updates the secret, and restarts the vault pods.
+  Idempotent (no-ops when the token is valid).
+- **★ Second control host on the always-on Ubuntu edge box .203 (2026-07-01).**
+  The jump-host repo is copied to `192.168.1.203:/opt/apps/git-vsphere` (user
+  `bstha`). .203 now runs Ansible + git standalone: ESXi root SSH (via
+  `/apps/git-code/keys/ansible-key` + `~/.ssh/config` Host block), fleet reach
+  (ansible-key), and GitHub (`~/.ssh/id_ed25519`, repo `myhome-automation/git-vsphere`).
+  Verified: `cluster_powerup.yml` runs the strictly-serial power-on from .203.
+  gdragon's k3s workloads (transit Vault / AWX / OpenVAS) are **unchanged** —
+  NOT moved. gdragon remains the primary control host + `platform-startup.service`.
 - **★ Whole platform is up and survives the nightly shutdown.** Bring up:
   `scripts/platform-startup.sh` (auto-runs on gdragon boot via
   `platform-startup.service`); bring down: `scripts/platform-shutdown.sh`.
