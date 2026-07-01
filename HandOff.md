@@ -33,6 +33,13 @@ here. Key differences from the original gdragon (.181, Rocky) control host:
   - Rebuild both idempotently: **`scripts/edge203-kubeconfigs.sh`**. Verified both:
     k8s 6/6 Ready, k3s node `gdragon` Ready (v1.35.5+k3s1).
   - gdragon firewalld already allows `.203 → 6443` (a `public`-zone rich rule).
+  - **Durable in IaC (2026-07-01):** the 6443 firewall opening + the dedicated
+    `edge-203->gdragon` authorized_key are captured in
+    **`ansible/playbooks/gdragon_control_access.yml`** (inventory `[control]` group;
+    key at `ansible/files/edge203_gdragon.pub`). Re-apply after a gdragon rebuild:
+    `ansible-playbook playbooks/gdragon_control_access.yml` (add `-c local` on gdragon).
+    The redundant personal `id_ed25519` was pruned from gdragon `authorized_keys`;
+    only the dedicated key remains.
 - **Credentials present on .203** (copied from gdragon; NOT in git):
   - `/apps/git-code/keys/ansible-key` — fleet + ESXi SSH key (mirrors gdragon's path
     so `ansible.cfg`'s `private_key_file` resolves).
