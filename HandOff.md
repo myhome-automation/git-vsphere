@@ -11,6 +11,50 @@
 
 ---
 
+## ★ IF YOU ARE RUNNING ON .203 (the Ubuntu control host) — READ FIRST (2026-07-01)
+
+As of 2026-07-01 there is a **second control host on the always-on Ubuntu edge
+box `.203`** (`gdragon-edge`, Ubuntu 24.04, user `bstha`). Claude Code now runs
+here. Key differences from the original gdragon (.181, Rocky) control host:
+
+- **Repo path is `/opt/apps/git-vsphere`** on .203 (NOT `/apps/git-code/git-vsphere`,
+  which is gdragon's path). Both repos are in sync at commit `3ec13f4`.
+- **Tools installed on .203:** `ansible-core 2.16.3`, `ansible-playbook`, `git 2.43.0`,
+  `jq`. **NOT on .203:** `kubectl`, a cluster kubeconfig, `k3s` (those live on gdragon).
+- **Credentials present on .203** (copied from gdragon; NOT in git):
+  - `/apps/git-code/keys/ansible-key` — fleet + ESXi SSH key (mirrors gdragon's path
+    so `ansible.cfg`'s `private_key_file` resolves).
+  - `~/.ssh/id_ed25519` — GitHub key (user `bidur123`); `~/.ssh/config` has a
+    `github.com` block **and** a `Host 192.168.1.174` (ESXi `root`) block.
+    ⚠ This is a COPY of the user's personal GitHub key — consider a dedicated deploy key.
+  - `ansible/.vault_pass` — present (in the repo copy) for vault-encrypted group_vars.
+- **What .203 CAN do standalone (verified):** run Ansible against ESXi + the VMs, and
+  git pull/push to `origin` (`git@github.com:myhome-automation/git-vsphere.git`). e.g.
+  the strictly-serial power-on:
+  ```bash
+  cd /opt/apps/git-vsphere/ansible
+  ANSIBLE_CONFIG=$PWD/ansible.cfg ansible-playbook playbooks/cluster_powerup.yml
+  ```
+- **What is still gdragon-ONLY (do NOT expect these from .203):** the FULL
+  `scripts/platform-startup.sh` — it hardcodes `REPO=/apps/git-code/git-vsphere` and
+  uses `kk()=sudo k3s kubectl` (gdragon's k3s) for the **transit Vault** (step 1), the
+  **Vault token self-heal** (step 7), the **AWX/OpenVAS mgmt tier** (step 8) and the
+  **OpenVAS scan** (step 9). Those need gdragon's k3s, so **run `platform-startup.sh`
+  from gdragon**. The transit auto-unseal Vault, AWX and OpenVAS were intentionally
+  **NOT moved** off gdragon's k3s.
+- **To make .203 talk to the cluster API** (optional, not yet done): install `kubectl`
+  + copy a kubeconfig pointing at VIP `192.168.1.50:6443`. Until then use the
+  `ssh ansible@192.168.1.186 -- sudo kubectl …` pattern (the ansible-key works from .203).
+
+**This session (2026-07-01) did:** ran the startup sequence in order; fixed a live
+Vault CrashLoop (stale transit token) + committed a durable self-heal; copied the repo
+to `.203:/opt/apps/git-vsphere`; provisioned .203 as a standalone Ansible/git executor.
+Pushed as `3ec13f4` (both repos synced). Next candidate steps: give .203 `kubectl` +
+kubeconfig; optionally make `platform-startup.sh` path-portable; rotate .203 to its own
+GitHub deploy key.
+
+---
+
 ## Current state (2026-06-25 — OPERATIONAL & nightly-reboot resilient)
 
 - **★ Vault auto-unseal is now SELF-HEALING (2026-07-01).** Incident: the 3
