@@ -58,13 +58,6 @@ here. Key differences from the original gdragon (.181, Rocky) control host:
   **OpenVAS scan** (step 9). Those need gdragon's k3s, so **run `platform-startup.sh`
   from gdragon**. The transit auto-unseal Vault, AWX and OpenVAS were intentionally
   **NOT moved** off gdragon's k3s.
-- **✅ .203 talks to the cluster API directly (DONE 2026-07-01):** `kubectl v1.36.1`
-  installed to `/usr/local/bin` (downloaded from `dl.k8s.io`, sha256-verified) and
-  `~/.kube/config` (mode 600) holds kmaster1's `admin.conf`, whose `server` already
-  points at VIP `192.168.1.50:6443`. Verified: 6/6 Ready, Vault 3/3 HA, `auth can-i
-  '*' '*'` → yes. The `ssh ansible@192.168.1.186 -- sudo kubectl …` fallback still
-  works too. (kubeconfig is cluster-admin — NOT in git; regenerate via
-  `ssh ansible@192.168.1.186 -- sudo cat /etc/kubernetes/admin.conf > ~/.kube/config`.)
 
 **This session (2026-07-01) did:** ran the startup sequence in order; fixed a live
 Vault CrashLoop (stale transit token) + committed a durable self-heal; copied the repo
