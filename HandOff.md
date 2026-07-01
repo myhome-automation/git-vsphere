@@ -20,16 +20,29 @@ here. Key differences from the original gdragon (.181, Rocky) control host:
 - **Repo path is `/opt/apps/git-vsphere`** on .203 (NOT `/apps/git-code/git-vsphere`,
   which is gdragon's path). Both repos are in sync at commit `3ec13f4`.
 - **Tools installed on .203:** `ansible-core 2.16.3`, `ansible-playbook`, `git 2.43.0`,
-  `jq`, **`kubectl v1.36.1`** (`/usr/local/bin`, checksum-verified, matches server) +
-  **a cluster kubeconfig** (`~/.kube/config`, mode 600 — copied from kmaster1's
-  `admin.conf`, server = VIP `192.168.1.50:6443`; `kubectl get nodes` verified
-  native from .203, 2026-07-01). **NOT on .203:** `k3s`, `helm` (those live on gdragon).
+  `jq`, **`kubectl v1.36.1`** (`/usr/local/bin`, checksum-verified, matches the kubeadm
+  server). **NOT on .203:** `k3s`, `helm` (those live on gdragon).
+- **★ .203 reaches BOTH clusters, via TWO SEPARATE kubeconfig files (2026-07-01):**
+  - `~/.kube/k8s.conf` → context **`k8s`** → kubeadm cluster via VIP `192.168.1.50:6443`
+    (from kmaster1 `admin.conf`).
+  - `~/.kube/k3s.conf` → context **`k3s`** → gdragon's k3s via `192.168.1.181:6443`
+    (from gdragon `/etc/rancher/k3s/k3s.yaml`, `127.0.0.1`→`.181` rewritten).
+  - Both are mode 0600, cluster-admin, **NOT in git**. Exposed together via
+    `KUBECONFIG="$HOME/.kube/k8s.conf:$HOME/.kube/k3s.conf"` in `~/.bashrc`. Switch:
+    `kubectl config use-context k8s|k3s`. There is **no merged `~/.kube/config`** (removed).
+  - Rebuild both idempotently: **`scripts/edge203-kubeconfigs.sh`**. Verified both:
+    k8s 6/6 Ready, k3s node `gdragon` Ready (v1.35.5+k3s1).
+  - gdragon firewalld already allows `.203 → 6443` (a `public`-zone rich rule).
 - **Credentials present on .203** (copied from gdragon; NOT in git):
   - `/apps/git-code/keys/ansible-key` — fleet + ESXi SSH key (mirrors gdragon's path
     so `ansible.cfg`'s `private_key_file` resolves).
   - `~/.ssh/id_ed25519` — GitHub key (user `bidur123`); `~/.ssh/config` has a
     `github.com` block **and** a `Host 192.168.1.174` (ESXi `root`) block.
     ⚠ This is a COPY of the user's personal GitHub key — consider a dedicated deploy key.
+  - `~/.ssh/gdragon_ed25519` — **dedicated .203→gdragon key (2026-07-01)**, authorized
+    for `bstha@192.168.1.181`; `~/.ssh/config` `Host gdragon`/`192.168.1.181` block uses
+    it. Used to fetch the k3s kubeconfig (so k3s access does NOT depend on the personal
+    GitHub key). Note ongoing kubectl→k3s needs no SSH — it talks straight to `.181:6443`.
   - `ansible/.vault_pass` — present (in the repo copy) for vault-encrypted group_vars.
 - **What .203 CAN do standalone (verified):** run Ansible against ESXi + the VMs, and
   git pull/push to `origin` (`git@github.com:myhome-automation/git-vsphere.git`). e.g.
@@ -58,12 +71,15 @@ Vault CrashLoop (stale transit token) + committed a durable self-heal; copied th
 to `.203:/opt/apps/git-vsphere`; provisioned .203 as a standalone Ansible/git executor.
 Pushed as `3ec13f4` (both repos synced).
 
-**Follow-up session (2026-07-01) did:** gave .203 native cluster access — installed
-`kubectl v1.36.1` + a cluster-admin kubeconfig (VIP endpoint), verified `kubectl get
-nodes` (6/6 Ready) and Vault 3/3 HA directly from .203. Remaining candidate steps:
-optionally make `platform-startup.sh` path-portable; rotate .203 to its own GitHub
-deploy key; (cluster-side) reconcile the two OutOfSync ArgoCD apps (`consul`,
-`kube-prometheus-stack`).
+**Follow-up session (2026-07-01) did:** gave .203 native access to BOTH clusters via
+two SEPARATE kubeconfig files — `~/.kube/k8s.conf` (context `k8s`, kubeadm VIP `.50`)
+and `~/.kube/k3s.conf` (context `k3s`, gdragon `.181`), merged via `KUBECONFIG` in
+`~/.bashrc`; installed `kubectl v1.36.1`; added a dedicated `.203→gdragon` SSH key
+(no longer leans on the personal GitHub key for k3s). Made it reproducible in
+`scripts/edge203-kubeconfigs.sh`. Verified both: k8s 6/6 Ready, k3s `gdragon` Ready.
+Remaining candidate steps: optionally make `platform-startup.sh` path-portable; rotate
+.203 to its own GitHub deploy key; (cluster-side) reconcile the two OutOfSync ArgoCD
+apps (`consul`, `kube-prometheus-stack`).
 
 ---
 
