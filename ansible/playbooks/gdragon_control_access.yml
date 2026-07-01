@@ -1,0 +1,30 @@
+---
+# gdragon_control_access.yml — make the .203 edge box's access to the gdragon k3s
+# CONTROL host durable (survives a gdragon rebuild). Both settings were configured
+# live on 2026-07-01; this play captures them as IaC:
+#   1. firewalld: allow .203 -> the k3s API on 6443 (public-zone rich rule) so
+#      `kubectl --context k3s` from .203 reaches 192.168.1.181:6443.
+#   2. authorized_key: the dedicated `edge-203->gdragon` SSH key for user bstha
+#      (so .203 can SSH gdragon without leaning on the personal GitHub key).
+#
+# Run from .203:   ANSIBLE_CONFIG=$PWD/ansible.cfg ansible-playbook playbooks/gdragon_control_access.yml
+# Run ON gdragon:  ansible-playbook playbooks/gdragon_control_access.yml -c local
+- name: gdragon | durable edge-.203 access (k3s API firewall + SSH key)
+  hosts: control
+  gather_facts: false
+  tasks:
+    - name: open the k3s API (6443) to the .203 edge control host
+      ansible.posix.firewalld:
+        zone: public
+        rich_rule: rule family="ipv4" source address="192.168.1.203/32" port protocol="tcp" port="6443" accept
+        permanent: true
+        immediate: true
+        state: enabled
+      become: true
+
+    - name: authorize the dedicated edge-203->gdragon SSH key for bstha
+      ansible.builtin.authorized_key:
+        user: bstha
+        key: "{{ lookup('file', playbook_dir + '/../files/edge203_gdragon.pub') }}"
+        state: present
+        exclusive: false
