@@ -20,7 +20,10 @@ here. Key differences from the original gdragon (.181, Rocky) control host:
 - **Repo path is `/opt/apps/git-vsphere`** on .203 (NOT `/apps/git-code/git-vsphere`,
   which is gdragon's path). Both repos are in sync at commit `3ec13f4`.
 - **Tools installed on .203:** `ansible-core 2.16.3`, `ansible-playbook`, `git 2.43.0`,
-  `jq`. **NOT on .203:** `kubectl`, a cluster kubeconfig, `k3s` (those live on gdragon).
+  `jq`, **`kubectl v1.36.1`** (`/usr/local/bin`, checksum-verified, matches server) +
+  **a cluster kubeconfig** (`~/.kube/config`, mode 600 — copied from kmaster1's
+  `admin.conf`, server = VIP `192.168.1.50:6443`; `kubectl get nodes` verified
+  native from .203, 2026-07-01). **NOT on .203:** `k3s`, `helm` (those live on gdragon).
 - **Credentials present on .203** (copied from gdragon; NOT in git):
   - `/apps/git-code/keys/ansible-key` — fleet + ESXi SSH key (mirrors gdragon's path
     so `ansible.cfg`'s `private_key_file` resolves).
@@ -42,16 +45,25 @@ here. Key differences from the original gdragon (.181, Rocky) control host:
   **OpenVAS scan** (step 9). Those need gdragon's k3s, so **run `platform-startup.sh`
   from gdragon**. The transit auto-unseal Vault, AWX and OpenVAS were intentionally
   **NOT moved** off gdragon's k3s.
-- **To make .203 talk to the cluster API** (optional, not yet done): install `kubectl`
-  + copy a kubeconfig pointing at VIP `192.168.1.50:6443`. Until then use the
-  `ssh ansible@192.168.1.186 -- sudo kubectl …` pattern (the ansible-key works from .203).
+- **✅ .203 talks to the cluster API directly (DONE 2026-07-01):** `kubectl v1.36.1`
+  installed to `/usr/local/bin` (downloaded from `dl.k8s.io`, sha256-verified) and
+  `~/.kube/config` (mode 600) holds kmaster1's `admin.conf`, whose `server` already
+  points at VIP `192.168.1.50:6443`. Verified: 6/6 Ready, Vault 3/3 HA, `auth can-i
+  '*' '*'` → yes. The `ssh ansible@192.168.1.186 -- sudo kubectl …` fallback still
+  works too. (kubeconfig is cluster-admin — NOT in git; regenerate via
+  `ssh ansible@192.168.1.186 -- sudo cat /etc/kubernetes/admin.conf > ~/.kube/config`.)
 
 **This session (2026-07-01) did:** ran the startup sequence in order; fixed a live
 Vault CrashLoop (stale transit token) + committed a durable self-heal; copied the repo
 to `.203:/opt/apps/git-vsphere`; provisioned .203 as a standalone Ansible/git executor.
-Pushed as `3ec13f4` (both repos synced). Next candidate steps: give .203 `kubectl` +
-kubeconfig; optionally make `platform-startup.sh` path-portable; rotate .203 to its own
-GitHub deploy key.
+Pushed as `3ec13f4` (both repos synced).
+
+**Follow-up session (2026-07-01) did:** gave .203 native cluster access — installed
+`kubectl v1.36.1` + a cluster-admin kubeconfig (VIP endpoint), verified `kubectl get
+nodes` (6/6 Ready) and Vault 3/3 HA directly from .203. Remaining candidate steps:
+optionally make `platform-startup.sh` path-portable; rotate .203 to its own GitHub
+deploy key; (cluster-side) reconcile the two OutOfSync ArgoCD apps (`consul`,
+`kube-prometheus-stack`).
 
 ---
 
