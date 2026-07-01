@@ -34,6 +34,14 @@ gdragon-edge ansible_host=192.168.1.203 ansible_user=bstha ansible_ssh_private_k
 [dns]
 gdragon-edge
 
+# gdragon (.181, Rocky 9) — the k3s / control host (transit Vault + AWX + OpenVAS).
+# Managed only so its edge-access config (k3s API firewall opening for .203 + the
+# dedicated .203 authorized_key) is DURABLE across a rebuild — see
+# playbooks/gdragon_control_access.yml. SSH from .203 uses the dedicated key;
+# when running ON gdragon add `-c local`.
+[control]
+gdragon-ctl ansible_host=192.168.1.181 ansible_user=bstha ansible_ssh_private_key_file=/home/bstha/.ssh/gdragon_ed25519
+
 [cluster:children]
 k8s_masters
 k8s_workers
